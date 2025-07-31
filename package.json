@@ -9,8 +9,6 @@
     "client": "cd client && npm start",
     "build": "npm install && cd client && npm install && npm run build",
     "start": "node server/index.js",
-    "railway:build": "npm run build",
-    "railway:start": "npm start"
     "railway:build": "npm install && cd client && npm install && npm run build",
     "railway:start": "node server/index.js"
   },

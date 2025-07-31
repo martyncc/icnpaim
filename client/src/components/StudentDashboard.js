@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Clock, Award, TrendingUp, Play, Lock, CheckCircle } from 'lucide-react';
+import { Clock, Play, Lock } from 'lucide-react';
 import axios from 'axios';
 
 const StudentDashboard = () => {

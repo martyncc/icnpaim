@@ -1,0 +1,27 @@
+# ICN PAIM - Configuración para cPanel + Node.js
+
+# Redirigir todas las rutas LTI al servidor Node.js
+RewriteEngine On
+
+# Redirigir rutas LTI al puerto interno de Node.js
+RewriteCond %{REQUEST_URI} ^/lti/(.*)$ [OR]
+RewriteCond %{REQUEST_URI} ^/\.well-known/jwks\.json$ [OR]
+RewriteCond %{REQUEST_URI} ^/api/(.*)$
+RewriteRule ^(.*)$ http://localhost:3333/$1 [P,L]
+
+# Permitir CORS para LTI
+Header always set Access-Control-Allow-Origin "*"
+Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With"
+
+# Manejar preflight OPTIONS
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^(.*)$ $1 [R=200,L]
+
+# Fallback a WordPress para otras rutas
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_URI} !^/lti/
+RewriteCond %{REQUEST_URI} !^/api/
+RewriteCond %{REQUEST_URI} !^/\.well-known/
+RewriteRule . /index.php [L]

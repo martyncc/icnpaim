@@ -13,14 +13,14 @@ const app = express();
 // MIDDLEWARE
 // ===================
 
+const allowedOrigins = [
+  'https://udla-staging.blackboard.com',
+  'https://lti.icnpaim.cl',
+  'http://localhost:3000'
+];
+
 app.use(cors({
-  origin: [
-    'https://udla-staging.blackboard.com',
-    'https://blackboard.com',
-    'https://lti.icnpaim.cl',
-    'https://lti.icnpaim.cl',
-    'http://localhost:3000'
-  ],
+  origin: allowedOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
@@ -221,18 +221,8 @@ app.post('/lti/launch', (req, res) => {
 
 // 3. JWKS Endpoint - Para que Blackboard valide nuestros tokens
 app.get('/.well-known/jwks.json', (req, res) => {
-  // Por ahora, JWKS vacío ya que no firmamos tokens
-  res.send(`
-  <html>
-    <body style="font-family: sans-serif; text-align: center; margin-top: 50px;">
-      <h2>✅ Conexión LTI completada</h2>
-      <p>Hola, ${userInfo.name || 'desconocido'} 👋</p>
-      <p>Curso: ${userInfo.course_name || 'sin curso'}</p>
-      <p>Rol: ${userInfo.roles.join(', ')}</p>
-    </body>
-  </html>
-`);
-
+  // NO estás firmando tokens, pero este endpoint debe devolver un JSON válido
+  res.json({ keys: [] }); // JWKS vacío, pero válido
 });
 
 // ===================
@@ -397,7 +387,7 @@ app.get('/health', (req, res) => {
 // Catch-all para React Router (solo en producción)
 if (process.env.NODE_ENV === 'production') {
   app.get('*', (req, res) => {
-    // No interceptar rutas LTI o API
+    // No interceptar rutas LTI o API o JWKS
     if (req.path.startsWith('/lti/') || req.path.startsWith('/api/') || req.path.startsWith('/.well-known/')) {
       return res.status(404).json({ error: 'Not found' });
     }

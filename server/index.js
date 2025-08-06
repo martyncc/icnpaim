@@ -46,7 +46,7 @@ if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
 }
 
 // ================
-// LTI ENDPOINTS
+// LTI ENDPOINTS test
 // ================
 app.use('/lti', require('./routes/ltiRoutes'));
 

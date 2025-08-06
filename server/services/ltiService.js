@@ -4,11 +4,12 @@ const axios = require('axios');
 
 class LTIService {
   constructor() {
-    // Datos de configuración de Blackboard
+    // Configuración según Developer Portal de Blackboard
     this.clientId = '48dd70cc-ab62-4fbd-ba91-d3d984644373';
-    this.secret = 'RtDM92nPph27Yy2dJyfYJDIC0px1FZRL';
     this.deploymentId = '2b286722-4ef6-4dda-a756-eec5dca12441';
-    this.platformAuthUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorizationcode';
+    
+    // URLs oficiales según documentación
+    this.oidcAuthUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorize';
     this.platformTokenUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/token';
     this.platformJwksUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/jwks';
     this.issuer = 'https://blackboard.com';
@@ -68,21 +69,24 @@ class LTIService {
   }
 
   /**
-   * Construir URL de autorización para Blackboard
+   * Construir URL de autorización según documentación oficial
    */
-  buildAuthUrl({ iss, login_hint, target_link_uri, state, nonce, client_id }) {
-    const params = new URLSearchParams({
+  buildAuthUrl({ login_hint, lti_message_hint, target_link_uri, state, nonce, client_id }) {
+    // Según documentación: usar OIDC Authentication Request URI del Developer Portal
+    const redirectUri = target_link_uri || `${this.baseUrl}/lti/launch`;
+    
+    const authParams = new URLSearchParams({
       response_type: 'id_token',
-      client_id: client_id || this.clientId,
-      redirect_uri: target_link_uri,
       scope: 'openid',
-      state: state,
-      nonce: nonce,
       login_hint: login_hint,
-      prompt: 'none'
+      lti_message_hint: lti_message_hint || '',
+      state: state,
+      redirect_uri: encodeURIComponent(redirectUri), // DEBE estar encoded
+      client_id: client_id || this.clientId,
+      nonce: nonce,
     });
 
-    return `https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorizationcode?${params.toString()}`;
+    return `${this.oidcAuthUrl}?${authParams.toString()}`;
   }
 
   /**

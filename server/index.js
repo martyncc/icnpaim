@@ -53,16 +53,102 @@ if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
 // Endpoint de login LTI - Manejar tanto GET como POST
 app.get('/lti/login', async (req, res) => {
   try {
-    console.log('🔐 LTI Login GET Request received');
+    console.log('🔐 LTI OIDC Login Request received');
     console.log('Query params:', req.query);
     
-    // Extraer parámetros de la URL
-    const { iss, login_hint, target_link_uri, lti_message_hint, lti_deployment_id, client_id } = req.query;
+    // Extraer parámetros según documentación oficial de Blackboard
+    const { 
+      iss,           // issuer
+      login_hint,    // opaque value - must be returned unaltered
+      target_link_uri, // URI configured for this LTI link
+      lti_message_hint, // opaque value - must be returned unaltered
+      lti_deployment_id, // deployment ID
+      client_id,     // client ID
+      lti_storage_target // for use if cookies aren't possible
+    } = req.query;
     
     console.log('🔍 Validating parameters:');
     console.log('- iss:', iss);
     console.log('- client_id:', client_id);
-    console.log('- deployment_id:', lti_deployment_id);
+    console.log('- lti_deployment_id:', lti_deployment_id);
+    console.log('- login_hint:', login_hint);
+    console.log('- target_link_uri:', target_link_uri);
+    console.log('- lti_message_hint:', lti_message_hint ? 'present' : 'missing');
+    
+    if (!iss || !login_hint || !client_id) {
+      console.log('❌ Missing required parameters');
+      return res.status(400).json({ 
+        error: 'Missing required LTI parameters',
+        received: { iss, login_hint, client_id, lti_deployment_id }
+      });
+    }
+
+    // Validar client_id (debe coincidir con el registrado en Developer Portal)
+    if (client_id !== '48dd70cc-ab62-4fbd-ba91-d3d984644373') {
+      console.log('❌ Invalid client_id:', client_id);
+      return res.status(400).json({ error: 'Invalid client_id' });
+    }
+
+    // Generar state y nonce para seguridad (según documentación)
+    const state = ltiService.generateState();
+    const nonce = ltiService.generateNonce();
+    
+    // Guardar state en cookie para verificar CSRF (según documentación)
+    req.session.lti_state = state;
+    req.session.lti_nonce = nonce;
+    req.session.login_hint = login_hint;
+    req.session.lti_message_hint = lti_message_hint;
+
+    // IMPORTANTE: Usar el OIDC Authentication Request URI del Developer Portal
+    // Según documentación: usar el endpoint OIDC de la instancia de Blackboard
+    const oidcAuthUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorize';
+    
+    // Construir URL según documentación oficial
+    const redirectUri = target_link_uri || 'https://lti.icnpaim.cl/lti/launch';
+    
+    const authParams = new URLSearchParams({
+      response_type: 'id_token',
+      scope: 'openid',
+      login_hint: login_hint,
+      lti_message_hint: lti_message_hint || '',
+      state: state,
+      redirect_uri: encodeURIComponent(redirectUri), // DEBE estar encoded
+      client_id: client_id,
+      nonce: nonce,
+    });
+
+    const finalAuthUrl = `${oidcAuthUrl}?${authParams.toString()}`;
+
+    console.log('🔗 Redirecting to Developer Portal OIDC auth:', finalAuthUrl);
+    res.redirect(finalAuthUrl);
+
+  } catch (error) {
+    console.error('❌ LTI Login Error:', error);
+    res.status(500).json({ error: 'LTI Login failed', details: error.message });
+  }
+});
+
+app.post('/lti/login', async (req, res) => {
+  try {
+    console.log('🔐 LTI OIDC Login POST Request received');
+    console.log('Headers:', req.headers);
+    console.log('Body:', req.body);
+    
+    // Extraer parámetros según documentación oficial
+    const { 
+      iss, 
+      login_hint, 
+      target_link_uri, 
+      client_id, 
+      lti_deployment_id,
+      lti_message_hint,
+      lti_storage_target
+    } = req.body;
+    
+    console.log('🔍 Validating parameters:');
+    console.log('- iss:', iss);
+    console.log('- client_id:', client_id);
+    console.log('- lti_deployment_id:', lti_deployment_id);
     console.log('- login_hint:', login_hint);
     console.log('- target_link_uri:', target_link_uri);
     
@@ -74,96 +160,41 @@ app.get('/lti/login', async (req, res) => {
       });
     }
 
-    // Validar client_id
+    // Validar client_id (debe coincidir con el registrado)
     if (client_id !== '48dd70cc-ab62-4fbd-ba91-d3d984644373') {
       console.log('❌ Invalid client_id:', client_id);
       return res.status(400).json({ error: 'Invalid client_id' });
     }
 
-    // Generar state y nonce para seguridad
+    // Generar state y nonce según documentación
     const state = ltiService.generateState();
     const nonce = ltiService.generateNonce();
     
-    // Guardar en sesión
+    // Guardar state en cookie para verificar CSRF
     req.session.lti_state = state;
     req.session.lti_nonce = nonce;
     req.session.login_hint = login_hint;
     req.session.lti_message_hint = lti_message_hint;
 
-    // Construir URL de autorización para Blackboard
-    const authUrl = `https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorizationcode?${new URLSearchParams({
+    // Usar OIDC Authentication Request URI del Developer Portal
+    const oidcAuthUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorize';
+    const redirectUri = target_link_uri || 'https://lti.icnpaim.cl/lti/launch';
+    
+    const authParams = new URLSearchParams({
       response_type: 'id_token',
-      client_id: client_id,
-      redirect_uri: 'https://lti.icnpaim.cl/lti/launch',
       scope: 'openid',
-      state: state,
-      nonce: nonce,
       login_hint: login_hint,
-      lti_message_hint: lti_message_hint,
-      prompt: 'none'
-    }).toString()}`;
-
-    console.log('🔗 Redirecting to Blackboard auth:', authUrl);
-    res.redirect(authUrl);
-
-  } catch (error) {
-    console.error('❌ LTI Login Error:', error);
-    res.status(500).json({ error: 'LTI Login failed', details: error.message });
-  }
-});
-
-app.post('/lti/login', async (req, res) => {
-  try {
-    console.log('🔐 LTI Login Request received');
-    console.log('Headers:', req.headers);
-    console.log('Body:', req.body);
-    
-    // Validar que viene de Blackboard
-    const { iss, login_hint, target_link_uri, client_id, lti_deployment_id } = req.body;
-    
-    console.log('🔍 Validating parameters:');
-    console.log('- iss:', iss);
-    console.log('- client_id:', client_id);
-    console.log('- deployment_id:', lti_deployment_id);
-    console.log('- login_hint:', login_hint);
-    
-    if (!iss || !login_hint || !client_id) {
-      console.log('❌ Missing required parameters');
-      return res.status(400).json({ 
-        error: 'Missing required LTI parameters',
-        received: { iss, login_hint, client_id, lti_deployment_id }
-      });
-    }
-
-    // Validar client_id
-    if (client_id !== '48dd70cc-ab62-4fbd-ba91-d3d984644373') {
-      console.log('❌ Invalid client_id:', client_id);
-      return res.status(400).json({ error: 'Invalid client_id' });
-    }
-
-    // Generar state y nonce para seguridad
-    const state = ltiService.generateState();
-    const nonce = ltiService.generateNonce();
-    
-    // Guardar en sesión
-    req.session.lti_state = state;
-    req.session.lti_nonce = nonce;
-    req.session.login_hint = login_hint;
-
-    // Construir URL de autorización para Blackboard
-    const authUrl = `https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorizationcode?${new URLSearchParams({
-      response_type: 'id_token',
+      lti_message_hint: lti_message_hint || '',
+      state: state,
+      redirect_uri: encodeURIComponent(redirectUri),
       client_id: client_id,
-      redirect_uri: 'https://lti.icnpaim.cl/lti/launch',
-      scope: 'openid',
-      state: state,
       nonce: nonce,
-      login_hint: login_hint,
-      prompt: 'none'
-    }).toString()}`;
+    });
 
-    console.log('🔗 Redirecting to:', authUrl);
-    res.redirect(authUrl);
+    const finalAuthUrl = `${oidcAuthUrl}?${authParams.toString()}`;
+    
+    console.log('🔗 Redirecting to Developer Portal:', finalAuthUrl);
+    res.redirect(finalAuthUrl);
 
   } catch (error) {
     console.error('❌ LTI Login Error:', error);
@@ -174,8 +205,9 @@ app.post('/lti/login', async (req, res) => {
 // Endpoint de launch LTI - DEBE coincidir con Blackboard config
 app.post('/lti/launch', async (req, res) => {
   try {
-    console.log('🚀 LTI Launch Request:', req.body);
-    console.log('🚀 LTI Launch Headers:', req.headers);
+    console.log('🚀 LTI Launch Request received from Developer Portal');
+    console.log('Body keys:', Object.keys(req.body));
+    console.log('Headers:', req.headers);
     
     const { id_token, state } = req.body;
     
@@ -184,24 +216,33 @@ app.post('/lti/launch', async (req, res) => {
       return res.status(400).json({ error: 'Missing id_token' });
     }
     
-    // Validar state
+    // Validar state para prevenir CSRF (según documentación)
     if (state !== req.session.lti_state) {
       console.log('❌ State mismatch:', { received: state, expected: req.session.lti_state });
       return res.status(400).json({ error: 'Invalid state parameter' });
     }
 
-    // Decodificar el JWT (sin validar por ahora para debugging)
+    console.log('✅ State validated successfully');
+    
+    // Decodificar el JWT token de Blackboard
     const jwt = require('jsonwebtoken');
     const tokenData = jwt.decode(id_token, { complete: true });
-    console.log('✅ Token validated:', tokenData);
+    console.log('📋 Token header:', tokenData?.header);
+    console.log('📋 Token payload keys:', tokenData?.payload ? Object.keys(tokenData.payload) : 'none');
     
     if (!tokenData || !tokenData.payload) {
       throw new Error('Invalid token structure');
     }
     
     const payload = tokenData.payload;
+    console.log('👤 User claims:', {
+      sub: payload.sub,
+      name: payload.name,
+      email: payload.email,
+      iss: payload.iss
+    });
 
-    // Extraer información del usuario y curso
+    // Extraer información del usuario y curso según claims LTI
     const userInfo = {
       lti_id: payload.sub,
       name: payload.name || (payload.given_name + ' ' + payload.family_name),
@@ -214,7 +255,7 @@ app.post('/lti/launch', async (req, res) => {
 
     console.log('👤 User Info:', userInfo);
 
-    // Por ahora, simular usuario de WordPress para testing
+    // Integrar con WordPress (por ahora simulado)
     const wpUser = {
       id: 1,
       name: userInfo.name,
@@ -223,7 +264,7 @@ app.post('/lti/launch', async (req, res) => {
     
     console.log('✅ WordPress user (simulated):', wpUser.name);
 
-    // Crear/actualizar curso si existe
+    // Crear/actualizar curso en el sistema
     let courseData = null;
     if (userInfo.course_id) {
       courseData = {
@@ -231,36 +272,51 @@ app.post('/lti/launch', async (req, res) => {
         title: userInfo.course_name,
         lti_course_id: userInfo.course_id
       };
+      console.log('📚 Course data:', courseData);
     }
 
-    // Guardar en sesión
+    // Guardar datos en sesión para uso posterior
     req.session.user = userInfo;
     req.session.wpUser = wpUser;
     req.session.course = courseData;
     req.session.authenticated = true;
 
-    // Determinar rol y redireccionar
+    // Determinar rol del usuario y redireccionar apropiadamente
     const isStudent = userInfo.roles.some(role => 
       role.includes('Student') || role.includes('Learner')
+    );
+    
+    const isInstructor = userInfo.roles.some(role =>
+      role.includes('Instructor') || role.includes('TeachingAssistant') || role.includes('Administrator')
     );
 
     console.log('🎯 User roles:', userInfo.roles);
     console.log('🎯 Is student:', isStudent);
+    console.log('🎯 Is instructor:', isInstructor);
 
     if (isStudent) {
+      console.log('➡️ Redirecting to student dashboard');
       res.redirect('/student-dashboard');
-    } else {
+    } else if (isInstructor) {
+      console.log('➡️ Redirecting to admin dashboard');
       res.redirect('/admin-dashboard');
+    } else {
+      console.log('➡️ Redirecting to welcome page (unknown role)');
+      res.redirect('/');
     }
 
   } catch (error) {
     console.error('❌ LTI Launch Error:', error);
+    console.error('❌ Error stack:', error.stack);
     res.status(500).send(`
       <div style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
         <h2 style="color: #dc2626;">Error de Conexión LTI</h2>
         <p>No se pudo completar la conexión con Blackboard.</p>
         <p><strong>Error:</strong> ${error.message}</p>
-        <p><strong>Stack:</strong> <pre style="text-align: left; background: #f5f5f5; padding: 10px;">${error.stack}</pre></p>
+        <details>
+          <summary>Detalles técnicos</summary>
+          <pre style="text-align: left; background: #f5f5f5; padding: 10px; font-size: 12px;">${error.stack}</pre>
+        </details>
         <a href="/lti/login" style="background: #4c51bf; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reintentar</a>
       </div>
     `);

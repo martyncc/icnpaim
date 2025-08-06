@@ -1,15 +1,22 @@
 const axios = require('axios');
 
+/**
+ * Servicio para conectar con WordPress como headless CMS
+ * Se conecta solo para traer contenido, no maneja autenticación
+ */
 class WordPressService {
   constructor() {
-    this.baseURL = process.env.WORDPRESS_URL;
+    this.baseURL = process.env.WORDPRESS_URL || 'https://icnpaim.cl';
     this.username = process.env.WORDPRESS_API_USER;
     this.password = process.env.WORDPRESS_API_PASSWORD;
-    this.auth = Buffer.from(`${this.username}:${this.password}`).toString('base64');
+    
+    if (this.username && this.password) {
+      this.auth = Buffer.from(`${this.username}:${this.password}`).toString('base64');
+    }
   }
 
   /**
-   * Hacer petición autenticada a WordPress
+   * Hacer petición a WordPress REST API
    */
   async makeRequest(method, endpoint, data = null) {
     try {
@@ -17,10 +24,14 @@ class WordPressService {
         method,
         url: `${this.baseURL}/wp-json/wp/v2/${endpoint}`,
         headers: {
-          'Authorization': `Basic ${this.auth}`,
           'Content-Type': 'application/json'
         }
       };
+
+      // Agregar autenticación si está disponible
+      if (this.auth) {
+        config.headers['Authorization'] = `Basic ${this.auth}`;
+      }
 
       if (data) {
         config.data = data;
@@ -35,152 +46,184 @@ class WordPressService {
   }
 
   /**
-   * Registrar o hacer login de usuario
+   * Obtener unidades de un curso específico
    */
-  async registerOrLoginUser(userInfo) {
+  async getCourseUnits(courseId) {
     try {
-      console.log('🔍 Checking/creating WordPress user...');
+      // Buscar posts del tipo 'icn_unit' filtrados por course_id
+      const units = await this.makeRequest('GET', `icn_unit?meta_key=course_id&meta_value=${courseId}&per_page=100`);
       
-      // Buscar si el usuario ya existe
-      const existingUsers = await this.makeRequest('GET', `users?search=${encodeURIComponent(userInfo.email)}`);
-      
-      if (existingUsers && existingUsers.length > 0) {
-        const user = existingUsers[0];
-        console.log('✅ Existing WordPress user found:', user.name);
-        
-        // Actualizar última conexión
-        await this.updateUserMeta(user.id, {
-          lti_user_id: userInfo.lti_id,
-          lti_roles: JSON.stringify(userInfo.roles),
-          last_lti_login: new Date().toISOString(),
-          course_id: userInfo.course_id,
-          platform_id: userInfo.platform_id
-        });
-        
-        return user;
-      }
-
-      // Crear nuevo usuario
-      const userData = {
-        username: this.generateUsername(userInfo.email),
-        email: userInfo.email,
-        name: userInfo.name,
-        password: this.generatePassword(),
-        roles: this.mapLTIRolesToWP(userInfo.roles),
-        meta: {
-          lti_user_id: userInfo.lti_id,
-          lti_roles: JSON.stringify(userInfo.roles),
-          first_lti_login: new Date().toISOString(),
-          last_lti_login: new Date().toISOString(),
-          course_id: userInfo.course_id,
-          platform_id: userInfo.platform_id
-        }
-      };
-
-      const newUser = await this.makeRequest('POST', 'users', userData);
-      console.log('✅ New WordPress user created:', newUser.name);
-      
-      return newUser;
+      return units.map(unit => ({
+        id: unit.id,
+        title: unit.title.rendered,
+        description: unit.content.rendered,
+        type: unit.meta?.unit_type || 'lesson',
+        duration: unit.meta?.estimated_duration || 30,
+        difficulty: unit.meta?.difficulty_level || 'Intermedio',
+        order: unit.meta?.order_index || 0,
+        content: unit.meta?.unit_content ? JSON.parse(unit.meta.unit_content) : []
+      }));
     } catch (error) {
-      console.error('Error in registerOrLoginUser:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Actualizar metadatos de usuario
-   */
-  async updateUserMeta(userId, metaData) {
-    try {
-      for (const [key, value] of Object.entries(metaData)) {
-        await this.makeRequest('POST', `users/${userId}/meta`, {
-          key,
-          value: typeof value === 'object' ? JSON.stringify(value) : value
-        });
-      }
-      return true;
-    } catch (error) {
-      console.error(`Error updating user meta for user ${userId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Crear post de cualquier tipo
-   */
-  async createPost(postType, postData) {
-    try {
-      const data = {
-        title: postData.title,
-        content: postData.content,
-        status: postData.status || 'publish',
-        type: postType,
-        meta: postData.meta || {}
-      };
-
-      return await this.makeRequest('POST', `${postType}s`, data);
-    } catch (error) {
-      console.error(`Error creating ${postType}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Buscar posts con criterios específicos
-   */
-  async searchPosts(postType, criteria = {}) {
-    try {
-      let queryParams = `?per_page=100`;
-      
-      if (criteria.meta_query) {
-        criteria.meta_query.forEach((meta, index) => {
-          queryParams += `&meta_key=${meta.key}&meta_value=${meta.value}&meta_compare=${meta.compare || '='}`;
-        });
-      }
-
-      const endpoint = postType === 'post' ? 'posts' : `${postType}s`;
-      return await this.makeRequest('GET', `${endpoint}${queryParams}`);
-    } catch (error) {
-      console.error(`Error searching ${postType}s:`, error);
+      console.error('Error fetching course units:', error);
       return [];
     }
   }
 
   /**
-   * Generar nombre de usuario único
+   * Obtener contenido de una unidad específica
    */
-  generateUsername(email) {
-    const base = email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
-    const timestamp = Date.now().toString().slice(-4);
-    return `${base}_${timestamp}`;
-  }
-
-  /**
-   * Generar contraseña temporal
-   */
-  generatePassword() {
-    return Math.random().toString(36).slice(-12) + '!A1';
-  }
-
-  /**
-   * Mapear roles de LTI a roles de WordPress
-   */
-  mapLTIRolesToWP(ltiRoles) {
-    if (!ltiRoles || ltiRoles.length === 0) return ['subscriber'];
-
-    for (const role of ltiRoles) {
-      if (role.includes('Instructor') || role.includes('TeachingAssistant')) {
-        return ['editor'];
-      }
-      if (role.includes('Administrator')) {
-        return ['administrator'];
-      }
-      if (role.includes('Student') || role.includes('Learner')) {
-        return ['subscriber'];
-      }
+  async getUnitContent(unitId) {
+    try {
+      const unit = await this.makeRequest('GET', `icn_unit/${unitId}`);
+      
+      return {
+        id: unit.id,
+        title: unit.title.rendered,
+        description: unit.content.rendered,
+        content: unit.meta?.unit_content ? JSON.parse(unit.meta.unit_content) : [],
+        structure: unit.meta?.unit_structure ? JSON.parse(unit.meta.unit_structure) : {},
+        type: unit.meta?.unit_type || 'lesson',
+        duration: unit.meta?.estimated_duration || 30,
+        difficulty: unit.meta?.difficulty_level || 'Intermedio'
+      };
+    } catch (error) {
+      console.error('Error fetching unit content:', error);
+      throw error;
     }
+  }
 
-    return ['subscriber'];
+  /**
+   * Obtener información de un curso
+   */
+  async getCourseInfo(courseId) {
+    try {
+      const courses = await this.makeRequest('GET', `icn_course?meta_key=lti_course_id&meta_value=${courseId}&per_page=1`);
+      
+      if (courses && courses.length > 0) {
+        const course = courses[0];
+        return {
+          id: course.id,
+          title: course.title.rendered,
+          description: course.content.rendered,
+          lti_course_id: course.meta?.lti_course_id,
+          instructor_id: course.meta?.instructor_id,
+          active: course.meta?.active === 'true'
+        };
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error fetching course info:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Crear o actualizar curso desde LTI
+   */
+  async createOrUpdateCourse(courseData) {
+    try {
+      // Buscar curso existente
+      const existingCourse = await this.getCourseInfo(courseData.lti_course_id);
+      
+      const postData = {
+        title: courseData.name,
+        content: `Curso: ${courseData.name}`,
+        status: 'publish',
+        meta: {
+          lti_course_id: courseData.lti_course_id,
+          platform_id: courseData.platform_id,
+          instructor_id: courseData.instructor_id,
+          active: 'true',
+          created_date: new Date().toISOString()
+        }
+      };
+
+      if (existingCourse) {
+        // Actualizar curso existente
+        await this.makeRequest('PUT', `icn_course/${existingCourse.id}`, postData);
+        return { ...existingCourse, ...postData };
+      } else {
+        // Crear nuevo curso
+        const newCourse = await this.makeRequest('POST', 'icn_course', postData);
+        return newCourse;
+      }
+    } catch (error) {
+      console.error('Error creating/updating course:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Guardar progreso del estudiante
+   */
+  async saveStudentProgress(progressData) {
+    try {
+      const postData = {
+        title: `Progreso - Usuario ${progressData.user_id} - Unidad ${progressData.unit_id}`,
+        content: 'Registro de progreso del estudiante',
+        status: 'publish',
+        meta: {
+          student_id: progressData.user_id,
+          unit_id: progressData.unit_id,
+          course_id: progressData.course_id,
+          completion_percentage: progressData.completion_percentage,
+          score: progressData.score,
+          completed: progressData.completed ? 'true' : 'false',
+          last_updated: new Date().toISOString()
+        }
+      };
+
+      const progress = await this.makeRequest('POST', 'icn_grade', postData);
+      return progress;
+    } catch (error) {
+      console.error('Error saving student progress:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Obtener progreso del estudiante
+   */
+  async getStudentProgress(userId, courseId) {
+    try {
+      const progressRecords = await this.makeRequest('GET', 
+        `icn_grade?meta_key=student_id&meta_value=${userId}&per_page=100`
+      );
+      
+      const progressByUnit = {};
+      
+      progressRecords.forEach(record => {
+        const unitId = record.meta?.unit_id;
+        if (unitId) {
+          progressByUnit[unitId] = {
+            completion_percentage: parseInt(record.meta?.completion_percentage) || 0,
+            score: parseFloat(record.meta?.score) || 0,
+            completed: record.meta?.completed === 'true',
+            last_updated: record.meta?.last_updated
+          };
+        }
+      });
+
+      return progressByUnit;
+    } catch (error) {
+      console.error('Error fetching student progress:', error);
+      return {};
+    }
+  }
+
+  /**
+   * Verificar conexión con WordPress
+   */
+  async testConnection() {
+    try {
+      const response = await this.makeRequest('GET', 'posts?per_page=1');
+      console.log('✅ WordPress connection successful');
+      return true;
+    } catch (error) {
+      console.error('❌ WordPress connection failed:', error.message);
+      return false;
+    }
   }
 }
 

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Play, Lock, BookOpen, Award, TrendingUp } from 'lucide-react';
+import { Clock, Play, Lock } from 'lucide-react';
+import axios from 'axios';
 
 const StudentDashboard = () => {
   const [user, setUser] = useState(null);
   const [units, setUnits] = useState([]);
-  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -17,29 +17,12 @@ const StudentDashboard = () => {
       setLoading(true);
       
       // Cargar información del usuario
-      const userResponse = await fetch('/api/user');
-      if (!userResponse.ok) throw new Error('Error al cargar usuario');
-      const userData = await userResponse.json();
-      setUser(userData);
+      const userResponse = await axios.get('/api/user');
+      setUser(userResponse.data);
 
       // Cargar unidades del estudiante
-      const unitsResponse = await fetch('/api/student/units');
-      if (!unitsResponse.ok) throw new Error('Error al cargar unidades');
-      const unitsData = await unitsResponse.json();
-      setUnits(unitsData);
-
-      // Calcular estadísticas
-      const totalUnits = unitsData.length;
-      const completedUnits = unitsData.filter(unit => unit.progress?.completed).length;
-      const averageScore = unitsData.reduce((sum, unit) => sum + (unit.progress?.score || 0), 0) / totalUnits || 0;
-      const overallProgress = totalUnits > 0 ? (completedUnits / totalUnits) * 100 : 0;
-
-      setStats({
-        totalUnits,
-        completedUnits,
-        averageScore: Math.round(averageScore),
-        overallProgress: Math.round(overallProgress)
-      });
+      const unitsResponse = await axios.get('/api/student/units');
+      setUnits(unitsResponse.data);
 
     } catch (error) {
       console.error('Error loading dashboard:', error);
@@ -51,20 +34,12 @@ const StudentDashboard = () => {
 
   const startUnit = async (unitId) => {
     try {
-      const response = await fetch('/api/progress/update', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          unitId: unitId,
-          contentId: 'unit_start',
-          completed: false,
-          score: 0
-        })
+      await axios.post('/api/progress/update', {
+        unitId: unitId,
+        contentId: 'unit_start',
+        completed: false,
+        score: 0
       });
-
-      if (!response.ok) throw new Error('Error al iniciar unidad');
 
       // Redirigir a la vista de la unidad
       window.location.href = `/unit/${unitId}`;
@@ -91,7 +66,7 @@ const StudentDashboard = () => {
       <div className="min-h-screen bg-gradient-to-br from-blue-600 to-purple-700 flex items-center justify-center">
         <div className="text-center text-white">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-          <p className="text-lg">Cargando tu camino de aprendizaje...</p>
+          <p>Cargando tu camino de aprendizaje...</p>
         </div>
       </div>
     );
@@ -106,7 +81,7 @@ const StudentDashboard = () => {
           <p className="text-gray-600 mb-4">{error}</p>
           <button 
             onClick={() => window.location.reload()} 
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
           >
             Reintentar
           </button>
@@ -114,6 +89,11 @@ const StudentDashboard = () => {
       </div>
     );
   }
+
+  const totalUnits = units.length;
+  const completedUnits = units.filter(unit => unit.progress?.completed).length;
+  const averageScore = units.reduce((sum, unit) => sum + (unit.progress?.score || 0), 0) / totalUnits || 0;
+  const overallProgress = totalUnits > 0 ? Math.round((completedUnits / totalUnits) * 100) : 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-600 to-purple-700">
@@ -124,7 +104,7 @@ const StudentDashboard = () => {
             <div className="flex items-center space-x-4">
               <div className="text-2xl font-bold text-blue-600">ICN PAIM</div>
               <div className="text-gray-600">|</div>
-              <div className="text-gray-800">{user?.course?.name || 'Mi Curso'}</div>
+              <div className="text-gray-800">{user?.course?.title || 'Mi Curso'}</div>
             </div>
             <div className="flex items-center space-x-4">
               <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-semibold">
@@ -147,53 +127,47 @@ const StudentDashboard = () => {
           </p>
         </div>
 
-        {/* Stats Overview */}
-        {stats && (
-          <div className="bg-white/95 backdrop-blur-sm rounded-2xl p-6 mb-8 shadow-xl">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
-              <div className="text-center p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl">
-                <BookOpen className="w-8 h-8 text-blue-600 mx-auto mb-2" />
-                <div className="text-3xl font-bold text-blue-600 mb-2">{stats.totalUnits}</div>
-                <div className="text-gray-600 font-medium">Unidades Totales</div>
-              </div>
-              <div className="text-center p-4 bg-gradient-to-br from-green-50 to-green-100 rounded-xl">
-                <Award className="w-8 h-8 text-green-600 mx-auto mb-2" />
-                <div className="text-3xl font-bold text-green-600 mb-2">{stats.completedUnits}</div>
-                <div className="text-gray-600 font-medium">Completadas</div>
-              </div>
-              <div className="text-center p-4 bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl">
-                <TrendingUp className="w-8 h-8 text-purple-600 mx-auto mb-2" />
-                <div className="text-3xl font-bold text-purple-600 mb-2">{stats.averageScore}%</div>
-                <div className="text-gray-600 font-medium">Puntuación Promedio</div>
-              </div>
-              <div className="text-center p-4 bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl">
-                <Clock className="w-8 h-8 text-orange-600 mx-auto mb-2" />
-                <div className="text-3xl font-bold text-orange-600 mb-2">
-                  {units.reduce((sum, unit) => sum + (unit.duration || 0), 0)}m
-                </div>
-                <div className="text-gray-600 font-medium">Tiempo Total</div>
-              </div>
+        {/* Progress Overview */}
+        <div className="bg-white/95 backdrop-blur-sm rounded-2xl p-6 mb-8 shadow-xl">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+            <div className="text-center p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl">
+              <div className="text-3xl font-bold text-blue-600 mb-2">{totalUnits}</div>
+              <div className="text-gray-600 font-medium">Unidades Totales</div>
             </div>
-            
-            <div className="mb-4">
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">Progreso General</h3>
-              <div className="bg-gray-200 rounded-full h-4 overflow-hidden">
-                <div 
-                  className="bg-gradient-to-r from-blue-500 to-purple-600 h-full rounded-full transition-all duration-500 relative overflow-hidden"
-                  style={{ width: `${stats.overallProgress}%` }}
-                >
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer"></div>
-                </div>
+            <div className="text-center p-4 bg-gradient-to-br from-green-50 to-green-100 rounded-xl">
+              <div className="text-3xl font-bold text-green-600 mb-2">{completedUnits}</div>
+              <div className="text-gray-600 font-medium">Completadas</div>
+            </div>
+            <div className="text-center p-4 bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl">
+              <div className="text-3xl font-bold text-purple-600 mb-2">{Math.round(averageScore)}%</div>
+              <div className="text-gray-600 font-medium">Puntuación Promedio</div>
+            </div>
+            <div className="text-center p-4 bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl">
+              <div className="text-3xl font-bold text-orange-600 mb-2">
+                {units.reduce((sum, unit) => sum + (unit.progress?.time_spent || 0), 0)}h
               </div>
-              <p className="text-center text-gray-600 mt-2">{stats.overallProgress}% completado</p>
+              <div className="text-gray-600 font-medium">Tiempo Dedicado</div>
             </div>
           </div>
-        )}
+          
+          <div className="mb-4">
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">Progreso General</h3>
+            <div className="bg-gray-200 rounded-full h-4 overflow-hidden">
+              <div 
+                className="bg-gradient-to-r from-blue-500 to-purple-600 h-full rounded-full transition-all duration-500 relative overflow-hidden"
+                style={{ width: `${overallProgress}%` }}
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-pulse"></div>
+              </div>
+            </div>
+            <p className="text-center text-gray-600 mt-2">{overallProgress}% completado</p>
+          </div>
+        </div>
 
         {/* Units Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {units.map((unit, index) => {
-            const isLocked = !unit.unlocked;
+            const isLocked = !unit.unlocked && index > 0;
             const isCompleted = unit.progress?.completed;
             const progress = unit.progress?.completion_percentage || 0;
 

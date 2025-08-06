@@ -1,265 +1,367 @@
 const wordpressService = require('./wordpressService');
 
-/**
- * Servicio para manejar lógica de cursos y progreso
- * Actúa como capa intermedia entre el backend y WordPress
- */
 class CourseService {
   constructor() {
-    this.cache = new Map(); // Cache simple para mejorar performance
-    this.cacheTimeout = 5 * 60 * 1000; // 5 minutos
+    this.postTypes = {
+      COURSE: 'icn_course',
+      UNIT: 'icn_unit',
+      PATHWAY: 'icn_pathway',
+      STUDENT: 'icn_student',
+      GRADE: 'icn_grade'
+    };
   }
 
   /**
-   * Obtener unidades activas para un estudiante
+   * Crear o actualizar curso desde LTI
    */
-  async getStudentUnits(userId, courseId) {
+  async createOrUpdateCourse(courseData) {
     try {
-      const cacheKey = `units_${courseId}`;
-      const cached = this.cache.get(cacheKey);
-      
-      // Usar cache si está disponible y no ha expirado
-      if (cached && (Date.now() - cached.timestamp) < this.cacheTimeout) {
-        console.log('📦 Using cached units for course:', courseId);
-        return await this.addProgressToUnits(cached.data, userId);
-      }
+      console.log('🏫 Creating/updating course:', courseData.name);
 
-      console.log('🔍 Fetching units from WordPress for course:', courseId);
-      
-      // Obtener unidades desde WordPress
-      const units = await wordpressService.getCourseUnits(courseId);
-      
-      // Guardar en cache
-      this.cache.set(cacheKey, {
-        data: units,
-        timestamp: Date.now()
+      // Buscar curso existente por LTI ID
+      const existingCourses = await wordpressService.searchPosts(this.postTypes.COURSE, {
+        meta_query: [
+          {
+            key: 'lti_course_id',
+            value: courseData.lti_course_id,
+            compare: '='
+          }
+        ]
       });
 
-      // Agregar progreso del estudiante
-      return await this.addProgressToUnits(units, userId);
+      const coursePostData = {
+        title: courseData.name,
+        content: `Curso: ${courseData.name}`,
+        status: 'publish',
+        meta: {
+          lti_course_id: courseData.lti_course_id,
+          platform_id: courseData.platform_id,
+          instructor_id: courseData.wp_user_id,
+          active: true,
+          created_date: new Date().toISOString()
+        }
+      };
+
+      if (existingCourses && existingCourses.length > 0) {
+        // Actualizar curso existente
+        const courseId = existingCourses[0].id;
+        await wordpressService.updatePost(courseId, coursePostData);
+        return { id: courseId, ...coursePostData };
+      } else {
+        // Crear nuevo curso y unidades de ejemplo
+        const newCourse = await wordpressService.createPost(this.postTypes.COURSE, coursePostData);
+        
+        // Crear unidades de ejemplo para el curso
+        await this.createSampleUnits(newCourse.id, courseData.name);
+        
+        return newCourse;
+      }
     } catch (error) {
-      console.error('Error fetching student units:', error);
-      
-      // Fallback a datos mock si WordPress falla
-      return this.getMockUnits();
+      console.error('Error creating/updating course:', error);
+      throw error;
     }
   }
 
   /**
-   * Agregar información de progreso a las unidades
+   * Crear unidades de ejemplo para un curso
    */
-  async addProgressToUnits(units, userId) {
+  async createSampleUnits(courseId, courseName) {
     try {
-      // Obtener progreso del estudiante desde WordPress
-      const progressData = await wordpressService.getStudentProgress(userId);
-      
-      return units.map((unit, index) => {
-        const progress = progressData[unit.id] || {
-          completion_percentage: 0,
-          score: 0,
-          completed: false,
-          last_updated: null
-        };
+      console.log('📚 Creating sample units for course:', courseName);
 
-        // Lógica de desbloqueo: primera unidad siempre desbloqueada
-        // Las siguientes se desbloquean cuando la anterior está completada
-        let unlocked = index === 0; // Primera unidad siempre desbloqueada
+      const sampleUnits = [
+        {
+          title: 'Introducción al Curso',
+          description: 'Bienvenida y objetivos del curso. Conoce qué aprenderás y cómo navegar por la plataforma.',
+          type: 'lesson',
+          duration: 15,
+          difficulty: 'Principiante',
+          content: [
+            {
+              type: 'video',
+              title: 'Video de Bienvenida',
+              description: 'Introducción al curso y objetivos de aprendizaje',
+              duration: 5
+            },
+            {
+              type: 'text',
+              title: 'Objetivos del Curso',
+              content: 'En este curso aprenderás los conceptos fundamentales y desarrollarás habilidades prácticas que te permitirán aplicar los conocimientos en situaciones reales.'
+            },
+            {
+              type: 'quiz',
+              title: 'Quiz de Orientación',
+              description: 'Evaluación inicial para conocer tu nivel',
+              questions: 3
+            }
+          ]
+        },
+        {
+          title: 'Conceptos Fundamentales',
+          description: 'Aprende los conceptos básicos que necesitas dominar para avanzar en el curso.',
+          type: 'lesson',
+          duration: 30,
+          difficulty: 'Principiante',
+          content: [
+            {
+              type: 'text',
+              title: 'Teoría Básica',
+              content: 'Los conceptos fundamentales incluyen definiciones, principios y metodologías básicas que forman la base del conocimiento.'
+            },
+            {
+              type: 'interactive',
+              title: 'Ejercicio Interactivo',
+              description: 'Practica los conceptos con este ejercicio interactivo'
+            },
+            {
+              type: 'quiz',
+              title: 'Evaluación de Conceptos',
+              description: 'Verifica tu comprensión de los conceptos básicos',
+              questions: 5
+            }
+          ]
+        },
+        {
+          title: 'Aplicación Práctica',
+          description: 'Aplica los conceptos aprendidos en ejercicios prácticos y casos reales.',
+          type: 'exercise',
+          duration: 45,
+          difficulty: 'Intermedio',
+          content: [
+            {
+              type: 'project',
+              title: 'Proyecto Práctico',
+              description: 'Desarrolla un proyecto que demuestre tu comprensión de los conceptos'
+            },
+            {
+              type: 'video',
+              title: 'Tutorial Paso a Paso',
+              description: 'Guía detallada para completar el proyecto',
+              duration: 20
+            },
+            {
+              type: 'assignment',
+              title: 'Entrega del Proyecto',
+              description: 'Sube tu proyecto completado para evaluación'
+            }
+          ]
+        },
+        {
+          title: 'Evaluación Final',
+          description: 'Demuestra todo lo que has aprendido en esta evaluación comprehensiva.',
+          type: 'exam',
+          duration: 60,
+          difficulty: 'Avanzado',
+          content: [
+            {
+              type: 'exam',
+              title: 'Examen Final',
+              description: 'Evaluación comprehensiva de todos los temas del curso',
+              questions: 25,
+              time_limit: 60
+            }
+          ]
+        }
+      ];
+
+      for (let i = 0; i < sampleUnits.length; i++) {
+        const unitData = sampleUnits[i];
         
-        if (index > 0) {
-          const previousUnit = units[index - 1];
-          const previousProgress = progressData[previousUnit.id];
-          unlocked = previousProgress && previousProgress.completed;
-        }
-
-        return {
-          ...unit,
-          unlocked,
-          progress
+        const unitPostData = {
+          title: unitData.title,
+          content: unitData.description,
+          status: 'publish',
+          meta: {
+            course_id: courseId,
+            unit_type: unitData.type,
+            estimated_duration: unitData.duration,
+            difficulty_level: unitData.difficulty,
+            unit_content: JSON.stringify(unitData.content),
+            active: true,
+            created_date: new Date().toISOString(),
+            order_index: i + 1,
+            unlocked: i === 0 // Solo la primera unidad está desbloqueada inicialmente
+          }
         };
-      });
+
+        await wordpressService.createPost(this.postTypes.UNIT, unitPostData);
+        console.log(`✅ Created unit: ${unitData.title}`);
+      }
+
     } catch (error) {
-      console.error('Error adding progress to units:', error);
+      console.error('Error creating sample units:', error);
+    }
+  }
+
+  /**
+   * Obtener camino del estudiante
+   */
+  async getStudentPathway(userId, courseId) {
+    try {
+      // Obtener unidades del curso
+      const units = await wordpressService.searchPosts(this.postTypes.UNIT, {
+        meta_query: [
+          {
+            key: 'course_id',
+            value: courseId,
+            compare: '='
+          },
+          {
+            key: 'active',
+            value: true,
+            compare: '='
+          }
+        ]
+      });
+
+      // Obtener progreso del estudiante para cada unidad
+      const unitsWithProgress = await Promise.all(
+        units.map(async (unit) => {
+          const progress = await this.getUnitProgress(userId, unit.id);
+          return {
+            ...unit,
+            progress: progress
+          };
+        })
+      );
+
+      return {
+        course_id: courseId,
+        units: unitsWithProgress,
+        total_units: units.length,
+        completed_units: unitsWithProgress.filter(u => u.progress?.completed).length
+      };
+
+    } catch (error) {
+      console.error('Error getting student pathway:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Obtener unidades activas para el estudiante
+   */
+  async getActiveUnits(userId, courseId) {
+    try {
+      const pathway = await this.getStudentPathway(userId, courseId);
       
-      // Si falla, devolver unidades sin progreso
-      return units.map((unit, index) => ({
-        ...unit,
-        unlocked: index === 0,
-        progress: {
-          completion_percentage: 0,
-          score: 0,
-          completed: false,
-          last_updated: null
-        }
+      return pathway.units.map(unit => ({
+        id: unit.id,
+        title: unit.title.rendered || unit.title,
+        description: unit.content.rendered || unit.content,
+        type: unit.meta?.unit_type || 'lesson',
+        duration: unit.meta?.estimated_duration || 30,
+        difficulty: unit.meta?.difficulty_level || 'Intermedio',
+        unlocked: unit.meta?.unlocked || false,
+        progress: unit.progress,
+        content: unit.meta?.unit_content ? JSON.parse(unit.meta.unit_content) : []
       }));
+
+    } catch (error) {
+      console.error('Error getting active units:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Obtener progreso de una unidad
+   */
+  async getUnitProgress(userId, unitId) {
+    try {
+      const grades = await wordpressService.searchPosts(this.postTypes.GRADE, {
+        meta_query: [
+          {
+            key: 'student_id',
+            value: userId,
+            compare: '='
+          },
+          {
+            key: 'unit_id',
+            value: unitId,
+            compare: '='
+          }
+        ]
+      });
+
+      if (grades && grades.length > 0) {
+        const grade = grades[0];
+        return {
+          completion_percentage: parseInt(grade.meta?.completion_percentage) || 0,
+          score: parseFloat(grade.meta?.score) || 0,
+          completed: grade.meta?.completed === 'true',
+          last_accessed: grade.meta?.last_accessed,
+          time_spent: parseInt(grade.meta?.time_spent) || 0
+        };
+      }
+
+      return {
+        completion_percentage: 0,
+        score: 0,
+        completed: false,
+        last_accessed: null,
+        time_spent: 0
+      };
+
+    } catch (error) {
+      console.error('Error getting unit progress:', error);
+      return null;
     }
   }
 
   /**
    * Actualizar progreso del estudiante
    */
-  async updateStudentProgress(userId, unitId, courseId, progressData) {
+  async updateProgress(userId, unitId, contentId, completed, score = 0) {
     try {
-      console.log('📊 Updating progress:', { userId, unitId, courseId, progressData });
+      console.log(`📊 Updating progress for user ${userId}, unit ${unitId}`);
 
-      // Guardar en WordPress
-      const savedProgress = await wordpressService.saveStudentProgress({
-        user_id: userId,
-        unit_id: unitId,
-        course_id: courseId,
-        completion_percentage: progressData.completion_percentage || 0,
-        score: progressData.score || 0,
-        completed: progressData.completed || false
+      // Buscar progreso existente
+      const existingProgress = await wordpressService.searchPosts(this.postTypes.GRADE, {
+        meta_query: [
+          {
+            key: 'student_id',
+            value: userId,
+            compare: '='
+          },
+          {
+            key: 'unit_id',
+            value: unitId,
+            compare: '='
+          }
+        ]
       });
 
-      // Limpiar cache para forzar actualización
-      this.cache.delete(`units_${courseId}`);
+      const progressData = {
+        title: `Progreso - Usuario ${userId} - Unidad ${unitId}`,
+        content: `Progreso del estudiante en la unidad`,
+        status: 'publish',
+        meta: {
+          student_id: userId,
+          unit_id: unitId,
+          content_id: contentId,
+          completed: completed.toString(),
+          score: score.toString(),
+          last_accessed: new Date().toISOString(),
+          completion_percentage: completed ? '100' : '50'
+        }
+      };
+
+      if (existingProgress && existingProgress.length > 0) {
+        // Actualizar progreso existente
+        const progressId = existingProgress[0].id;
+        await wordpressService.updatePost(progressId, progressData);
+      } else {
+        // Crear nuevo registro de progreso
+        await wordpressService.createPost(this.postTypes.GRADE, progressData);
+      }
 
       console.log('✅ Progress updated successfully');
-      return savedProgress;
+      return { success: true, completed, score };
+
     } catch (error) {
-      console.error('Error updating student progress:', error);
+      console.error('Error updating progress:', error);
       throw error;
     }
-  }
-
-  /**
-   * Obtener contenido detallado de una unidad
-   */
-  async getUnitContent(unitId) {
-    try {
-      const cacheKey = `unit_content_${unitId}`;
-      const cached = this.cache.get(cacheKey);
-      
-      if (cached && (Date.now() - cached.timestamp) < this.cacheTimeout) {
-        return cached.data;
-      }
-
-      const content = await wordpressService.getUnitContent(unitId);
-      
-      this.cache.set(cacheKey, {
-        data: content,
-        timestamp: Date.now()
-      });
-
-      return content;
-    } catch (error) {
-      console.error('Error fetching unit content:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Sincronizar curso desde LTI con WordPress
-   */
-  async syncCourseFromLTI(ltiData) {
-    try {
-      console.log('🔄 Syncing course from LTI:', ltiData.course_name);
-
-      const courseData = {
-        lti_course_id: ltiData.course_id,
-        name: ltiData.course_name,
-        platform_id: ltiData.platform_id,
-        instructor_id: ltiData.instructor_id || 1
-      };
-
-      const course = await wordpressService.createOrUpdateCourse(courseData);
-      
-      console.log('✅ Course synced successfully:', course.title);
-      return course;
-    } catch (error) {
-      console.error('Error syncing course from LTI:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Obtener estadísticas del estudiante
-   */
-  async getStudentStats(userId, courseId) {
-    try {
-      const units = await this.getStudentUnits(userId, courseId);
-      
-      const totalUnits = units.length;
-      const completedUnits = units.filter(unit => unit.progress.completed).length;
-      const totalScore = units.reduce((sum, unit) => sum + unit.progress.score, 0);
-      const averageScore = totalUnits > 0 ? totalScore / totalUnits : 0;
-      const overallProgress = totalUnits > 0 ? (completedUnits / totalUnits) * 100 : 0;
-
-      return {
-        total_units: totalUnits,
-        completed_units: completedUnits,
-        average_score: Math.round(averageScore),
-        overall_progress: Math.round(overallProgress),
-        units: units
-      };
-    } catch (error) {
-      console.error('Error fetching student stats:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Datos mock para desarrollo/fallback
-   */
-  getMockUnits() {
-    return [
-      {
-        id: 1,
-        title: 'Introducción al Curso',
-        description: 'Bienvenida y objetivos del curso. Conoce qué aprenderás y cómo navegar por la plataforma.',
-        type: 'lesson',
-        duration: 15,
-        difficulty: 'Principiante',
-        order: 1,
-        unlocked: true,
-        progress: { completion_percentage: 0, score: 0, completed: false },
-        content: [
-          { type: 'video', title: 'Video de Bienvenida', duration: 5 },
-          { type: 'text', title: 'Objetivos del Curso' },
-          { type: 'quiz', title: 'Quiz de Orientación', questions: 3 }
-        ]
-      },
-      {
-        id: 2,
-        title: 'Conceptos Fundamentales',
-        description: 'Aprende los conceptos básicos que necesitas dominar para avanzar en el curso.',
-        type: 'lesson',
-        duration: 30,
-        difficulty: 'Principiante',
-        order: 2,
-        unlocked: false,
-        progress: { completion_percentage: 0, score: 0, completed: false },
-        content: [
-          { type: 'text', title: 'Teoría Básica' },
-          { type: 'interactive', title: 'Ejercicio Interactivo' },
-          { type: 'quiz', title: 'Evaluación de Conceptos', questions: 5 }
-        ]
-      },
-      {
-        id: 3,
-        title: 'Aplicación Práctica',
-        description: 'Aplica los conceptos aprendidos en ejercicios prácticos y casos reales.',
-        type: 'exercise',
-        duration: 45,
-        difficulty: 'Intermedio',
-        order: 3,
-        unlocked: false,
-        progress: { completion_percentage: 0, score: 0, completed: false },
-        content: [
-          { type: 'project', title: 'Proyecto Práctico' },
-          { type: 'video', title: 'Tutorial Paso a Paso', duration: 20 },
-          { type: 'assignment', title: 'Entrega del Proyecto' }
-        ]
-      }
-    ];
-  }
-
-  /**
-   * Limpiar cache
-   */
-  clearCache() {
-    this.cache.clear();
-    console.log('🧹 Cache cleared');
   }
 }
 

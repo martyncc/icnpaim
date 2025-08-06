@@ -50,107 +50,21 @@ if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
 // RUTAS LTI
 // ===================
 
-// Endpoint de login LTI - Manejar tanto GET como POST
-app.get('/lti/login', async (req, res) => {
-  try {
-    console.log('🔐 LTI OIDC Login Request received');
-    console.log('Query params:', req.query);
-    
-    // Extraer parámetros según documentación oficial de Blackboard
-    const { 
-      iss,           // issuer
-      login_hint,    // opaque value - must be returned unaltered
-      target_link_uri, // URI configured for this LTI link
-      lti_message_hint, // opaque value - must be returned unaltered
-      lti_deployment_id, // deployment ID
-      client_id,     // client ID
-      lti_storage_target // for use if cookies aren't possible
-    } = req.query;
-    
-    console.log('🔍 Validating parameters:');
-    console.log('- iss:', iss);
-    console.log('- client_id:', client_id);
-    console.log('- lti_deployment_id:', lti_deployment_id);
-    console.log('- login_hint:', login_hint);
-    console.log('- target_link_uri:', target_link_uri);
-    console.log('- lti_message_hint:', lti_message_hint ? 'present' : 'missing');
-    
-    if (!iss || !login_hint || !client_id) {
-      console.log('❌ Missing required parameters');
-      return res.status(400).json({ 
-        error: 'Missing required LTI parameters',
-        received: { iss, login_hint, client_id, lti_deployment_id }
-      });
-    }
-
-    // Validar client_id (debe coincidir con el registrado en Developer Portal)
-    if (client_id !== '48dd70cc-ab62-4fbd-ba91-d3d984644373') {
-      console.log('❌ Invalid client_id:', client_id);
-      return res.status(400).json({ error: 'Invalid client_id' });
-    }
-
-    // Generar state y nonce para seguridad (según documentación)
-    const state = ltiService.generateState();
-    const nonce = ltiService.generateNonce();
-    
-    // Guardar state en cookie para verificar CSRF (según documentación)
-    req.session.lti_state = state;
-    req.session.lti_nonce = nonce;
-    req.session.login_hint = login_hint;
-    req.session.lti_message_hint = lti_message_hint;
-
-    // IMPORTANTE: Usar el OIDC Authentication Request URI del Developer Portal
-    // Según documentación: usar el endpoint OIDC de la instancia de Blackboard
-    const oidcAuthUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorize';
-    
-    // Construir URL según documentación oficial
-    const redirectUri = target_link_uri || 'https://lti.icnpaim.cl/lti/launch';
-    
-    const authParams = new URLSearchParams({
-      response_type: 'id_token',
-      scope: 'openid',
-      login_hint: login_hint,
-      lti_message_hint: lti_message_hint || '',
-      state: state,
-      redirect_uri: encodeURIComponent(redirectUri), // DEBE estar encoded
-      client_id: client_id,
-      nonce: nonce,
-    });
-
-    const finalAuthUrl = `${oidcAuthUrl}?${authParams.toString()}`;
-
-    console.log('🔗 Redirecting to Developer Portal OIDC auth:', finalAuthUrl);
-    res.redirect(finalAuthUrl);
-
-  } catch (error) {
-    console.error('❌ LTI Login Error:', error);
-    res.status(500).json({ error: 'LTI Login failed', details: error.message });
-  }
-});
-
+// Endpoint de login LTI - DEBE coincidir con Blackboard config
 app.post('/lti/login', async (req, res) => {
   try {
-    console.log('🔐 LTI OIDC Login POST Request received');
+    console.log('🔐 LTI Login Request received');
     console.log('Headers:', req.headers);
     console.log('Body:', req.body);
     
-    // Extraer parámetros según documentación oficial
-    const { 
-      iss, 
-      login_hint, 
-      target_link_uri, 
-      client_id, 
-      lti_deployment_id,
-      lti_message_hint,
-      lti_storage_target
-    } = req.body;
+    // Validar que viene de Blackboard
+    const { iss, login_hint, target_link_uri } = req.body;
     
     console.log('🔍 Validating parameters:');
     console.log('- iss:', iss);
     console.log('- client_id:', client_id);
-    console.log('- lti_deployment_id:', lti_deployment_id);
+    console.log('- deployment_id:', lti_deployment_id);
     console.log('- login_hint:', login_hint);
-    console.log('- target_link_uri:', target_link_uri);
     
     if (!iss || !login_hint || !client_id) {
       console.log('❌ Missing required parameters');
@@ -160,224 +74,108 @@ app.post('/lti/login', async (req, res) => {
       });
     }
 
-    // Validar client_id (debe coincidir con el registrado)
+    // Validar client_id
     if (client_id !== '48dd70cc-ab62-4fbd-ba91-d3d984644373') {
       console.log('❌ Invalid client_id:', client_id);
       return res.status(400).json({ error: 'Invalid client_id' });
     }
 
-    // Generar state y nonce según documentación
+    // Generar state y nonce para seguridad
     const state = ltiService.generateState();
     const nonce = ltiService.generateNonce();
     
-    // Guardar state en cookie para verificar CSRF
+    // Guardar en sesión
     req.session.lti_state = state;
     req.session.lti_nonce = nonce;
     req.session.login_hint = login_hint;
-    req.session.lti_message_hint = lti_message_hint;
 
-    // Usar OIDC Authentication Request URI del Developer Portal
-    const oidcAuthUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorize';
-    const redirectUri = target_link_uri || 'https://lti.icnpaim.cl/lti/launch';
-    
-    const authParams = new URLSearchParams({
-      response_type: 'id_token',
-      scope: 'openid',
-      login_hint: login_hint,
-      lti_message_hint: lti_message_hint || '',
-      state: state,
-      redirect_uri: encodeURIComponent(redirectUri),
-      client_id: client_id,
-      nonce: nonce,
+    // Construir URL de autorización
+    const authUrl = ltiService.buildAuthUrl({
+      iss,
+      login_hint,
+      target_link_uri: 'https://icnpaim.cl/lti/launch',
+      state,
+      nonce,
+      client_id
     });
 
-    const finalAuthUrl = `${oidcAuthUrl}?${authParams.toString()}`;
-    
-    console.log('🔗 Redirecting to Developer Portal:', finalAuthUrl);
-    res.redirect(finalAuthUrl);
+    console.log('🔗 Redirecting to:', authUrl);
+    res.redirect(authUrl);
 
   } catch (error) {
     console.error('❌ LTI Login Error:', error);
-    res.status(500).json({ error: 'LTI Login failed', details: error.message });
+    res.status(500).json({ error: 'LTI Login failed' });
   }
 });
 
 // Endpoint de launch LTI - DEBE coincidir con Blackboard config
 app.post('/lti/launch', async (req, res) => {
   try {
-    console.log('🚀 LTI Launch Request received from Developer Portal');
-    console.log('Content-Type:', req.headers['content-type']);
-    console.log('Body keys:', Object.keys(req.body));
+    console.log('🚀 LTI Launch Request:', req.body);
     
     const { id_token, state } = req.body;
     
-    if (!id_token) {
-      console.log('❌ No id_token received');
-      return res.status(400).json({ error: 'Missing id_token' });
-    }
-    
-    // Validar state para prevenir CSRF (según documentación)
+    // Validar state
     if (state !== req.session.lti_state) {
-      console.log('❌ State mismatch:', { received: state, expected: req.session.lti_state });
       return res.status(400).json({ error: 'Invalid state parameter' });
     }
 
-    console.log('✅ State validated successfully');
-    
-    // Decodificar el JWT token según especificación LTI 1.3
-    const jwt = require('jsonwebtoken');
-    const tokenData = jwt.decode(id_token, { complete: true });
-    
-    if (!tokenData || !tokenData.payload) {
-      throw new Error('Invalid JWT token structure');
-    }
-    
-    console.log('📋 JWT Header:', tokenData.header);
-    console.log('📋 JWT Algorithm:', tokenData.header.alg);
-    console.log('📋 JWT Key ID:', tokenData.header.kid);
-    
-    const payload = tokenData.payload;
-    
-    // Validar claims requeridos según LTI 1.3 spec
-    const requiredClaims = [
-      'iss', 'sub', 'aud', 'exp', 'iat', 'nonce',
-      'https://purl.imsglobal.org/spec/lti/claim/message_type',
-      'https://purl.imsglobal.org/spec/lti/claim/version',
-      'https://purl.imsglobal.org/spec/lti/claim/deployment_id'
-    ];
-    
-    for (const claim of requiredClaims) {
-      if (!payload[claim]) {
-        console.log(`❌ Missing required claim: ${claim}`);
-        throw new Error(`Missing required LTI claim: ${claim}`);
-      }
-    }
-    
-    // Validar nonce
-    if (payload.nonce !== req.session.lti_nonce) {
-      console.log('❌ Nonce mismatch:', { received: payload.nonce, expected: req.session.lti_nonce });
-      throw new Error('Invalid nonce');
-    }
-    
-    // Validar message_type
-    const messageType = payload['https://purl.imsglobal.org/spec/lti/claim/message_type'];
-    if (messageType !== 'LtiResourceLinkRequest') {
-      console.log('❌ Invalid message type:', messageType);
-      throw new Error('Invalid LTI message type');
-    }
-    
-    // Validar version
-    const version = payload['https://purl.imsglobal.org/spec/lti/claim/version'];
-    if (version !== '1.3.0') {
-      console.log('❌ Invalid LTI version:', version);
-      throw new Error('Invalid LTI version');
-    }
-    
-    console.log('✅ All LTI 1.3 claims validated');
-    console.log('📋 LTI Claims:', {
-      message_type: messageType,
-      version: version,
-      deployment_id: payload['https://purl.imsglobal.org/spec/lti/claim/deployment_id'],
-      sub: payload.sub,
-      iss: payload.iss,
-      aud: payload.aud
-    });
+    // Decodificar y validar el JWT
+    const tokenData = await ltiService.validateToken(id_token);
+    console.log('✅ Token validated:', tokenData);
 
-    // Extraer información del usuario según claims LTI 1.3
-    const context = payload['https://purl.imsglobal.org/spec/lti/claim/context'];
-    const resourceLink = payload['https://purl.imsglobal.org/spec/lti/claim/resource_link'];
-    const roles = payload['https://purl.imsglobal.org/spec/lti/claim/roles'] || [];
-    
+    // Extraer información del usuario y curso
     const userInfo = {
-      lti_id: payload.sub,
-      name: payload.name || `${payload.given_name || ''} ${payload.family_name || ''}`.trim() || 'Usuario',
-      email: payload.email,
-      roles: roles,
-      course_id: context?.id,
-      course_name: context?.label || context?.title,
-      resource_link_id: resourceLink?.id,
-      resource_link_title: resourceLink?.title,
-      deployment_id: payload['https://purl.imsglobal.org/spec/lti/claim/deployment_id'],
-      platform_id: payload.iss,
-      target_link_uri: payload['https://purl.imsglobal.org/spec/lti/claim/target_link_uri']
+      lti_id: tokenData.sub,
+      name: tokenData.name || tokenData.given_name + ' ' + tokenData.family_name,
+      email: tokenData.email,
+      roles: tokenData['https://purl.imsglobal.org/spec/lti/claim/roles'] || [],
+      course_id: tokenData['https://purl.imsglobal.org/spec/lti/claim/context']?.id,
+      course_name: tokenData['https://purl.imsglobal.org/spec/lti/claim/context']?.label,
+      platform_id: tokenData.iss
     };
 
-    console.log('👤 Extracted User Info:', {
-      name: userInfo.name,
-      email: userInfo.email,
-      roles: userInfo.roles,
-      course: userInfo.course_name,
-      deployment_id: userInfo.deployment_id
-    });
+    console.log('👤 User Info:', userInfo);
 
-    // Integrar con WordPress (por ahora simulado)
-    const wpUser = {
-      id: 1,
-      name: userInfo.name,
-      email: userInfo.email
-    };
-    
-    console.log('✅ WordPress user (simulated):', wpUser.name);
+    // Registrar/actualizar usuario en WordPress
+    const wpUser = await wordpressService.registerOrLoginUser(userInfo);
+    console.log('✅ WordPress user:', wpUser.name);
 
-    // Crear/actualizar curso en el sistema
+    // Crear/actualizar curso si existe
     let courseData = null;
     if (userInfo.course_id) {
-      courseData = {
-        id: userInfo.course_id,
-        title: userInfo.course_name,
-        lti_course_id: userInfo.course_id
-      };
-      console.log('📚 Course data:', courseData);
+      courseData = await courseService.createOrUpdateCourse({
+        lti_course_id: userInfo.course_id,
+        name: userInfo.course_name,
+        wp_user_id: wpUser.id,
+        platform_id: userInfo.platform_id
+      });
     }
 
-    // Guardar datos en sesión para uso posterior
+    // Guardar en sesión
     req.session.user = userInfo;
     req.session.wpUser = wpUser;
     req.session.course = courseData;
     req.session.authenticated = true;
 
-    // Determinar rol del usuario y redireccionar apropiadamente
+    // Determinar rol y redireccionar
     const isStudent = userInfo.roles.some(role => 
-      role.includes('Student') || 
-      role.includes('Learner') ||
-      role === 'http://purl.imsglobal.org/vocab/lis/v2/membership#Learner'
+      role.includes('Student') || role.includes('Learner')
     );
-    
-    const isInstructor = userInfo.roles.some(role =>
-      role.includes('Instructor') || 
-      role.includes('TeachingAssistant') || 
-      role.includes('Administrator') ||
-      role === 'http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor' ||
-      role === 'http://purl.imsglobal.org/vocab/lis/v2/membership#TeachingAssistant'
-    );
-
-    console.log('🎯 User roles:', userInfo.roles);
-    console.log('🎯 Is student:', isStudent);
-    console.log('🎯 Is instructor:', isInstructor);
 
     if (isStudent) {
-      console.log('➡️ Redirecting to student dashboard');
       res.redirect('/student-dashboard');
-    } else if (isInstructor) {
-      console.log('➡️ Redirecting to admin dashboard');
-      res.redirect('/admin-dashboard');
     } else {
-      console.log('➡️ Redirecting to welcome page (unknown role)');
-      res.redirect('/');
+      res.redirect('/admin-dashboard');
     }
 
   } catch (error) {
     console.error('❌ LTI Launch Error:', error);
-    console.error('❌ Error stack:', error.stack);
     res.status(500).send(`
       <div style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
         <h2 style="color: #dc2626;">Error de Conexión LTI</h2>
         <p>No se pudo completar la conexión con Blackboard.</p>
         <p><strong>Error:</strong> ${error.message}</p>
-        <details>
-          <summary>Detalles técnicos</summary>
-          <pre style="text-align: left; background: #f5f5f5; padding: 10px; font-size: 12px;">${error.stack}</pre>
-        </details>
         <a href="/lti/login" style="background: #4c51bf; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reintentar</a>
       </div>
     `);
@@ -555,10 +353,6 @@ app.get('/lti/health', (req, res) => {
 // Catch-all para React Router (solo en producción)
 if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
   app.get('*', (req, res) => {
-    // No interceptar rutas LTI
-    if (req.path.startsWith('/lti/') || req.path.startsWith('/api/') || req.path.startsWith('/.well-known/')) {
-      return res.status(404).json({ error: 'Not found' });
-    }
     res.sendFile(path.join(__dirname, '../client/build/index.html'));
   });
 }

@@ -1,5 +1,5 @@
 {
-  "name": "icnpaim",
+  "name": "icn-paim-simple",
   "version": "1.0.0",
   "description": "ICN PAIM - Plataforma simple con Express y React",
   "main": "server/index.js",
@@ -20,6 +20,7 @@
     "axios": "^1.6.0",
     "jsonwebtoken": "^9.0.2",
     "node-jose": "^2.2.0",
+    "crypto": "^1.0.1",
     "dotenv": "^16.3.1"
   },
   "devDependencies": {

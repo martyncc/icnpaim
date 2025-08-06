@@ -14,11 +14,11 @@ function App() {
           <Route path="/admin-dashboard" element={<AdminDashboard />} />
           <Route path="/unit/:unitId" element={<UnitView />} />
           <Route path="/" element={<div>ICN PAIM - Accede desde Blackboard</div>} />
-          }
         </Routes>
       </div>
     </Router>
   );
 }
+
 
 export default App;

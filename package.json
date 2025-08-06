@@ -1,4 +1,5 @@
-"scripts": {
+{
+	"scripts": {
   "dev": "concurrently \"npm run server\" \"npm run client\"",
   "server": "nodemon server/index.js",
   "client": "cd client && npm start",
@@ -6,4 +7,5 @@
   "start": "node server/index.js",
   "railway:build": "npm install && cd client && npm install && CI=false npm run build",
   "railway:start": "node server/index.js"
+}
 }

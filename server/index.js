@@ -222,9 +222,17 @@ app.post('/lti/launch', (req, res) => {
 // 3. JWKS Endpoint - Para que Blackboard valide nuestros tokens
 app.get('/.well-known/jwks.json', (req, res) => {
   // Por ahora, JWKS vacío ya que no firmamos tokens
-  res.json({
-    keys: []
-  });
+  res.send(`
+  <html>
+    <body style="font-family: sans-serif; text-align: center; margin-top: 50px;">
+      <h2>✅ Conexión LTI completada</h2>
+      <p>Hola, ${userInfo.name || 'desconocido'} 👋</p>
+      <p>Curso: ${userInfo.course_name || 'sin curso'}</p>
+      <p>Rol: ${userInfo.roles.join(', ')}</p>
+    </body>
+  </html>
+`);
+
 });
 
 // ===================

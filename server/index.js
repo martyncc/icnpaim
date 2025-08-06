@@ -5,7 +5,6 @@ const bodyParser = require('body-parser');
 const session = require('express-session');
 const path = require('path');
 const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
 
 const app = express();
 
@@ -399,7 +398,7 @@ if (process.env.NODE_ENV === 'production') {
 // INICIAR SERVIDOR
 // ===================
 
-const PORT = process.env.PORT || 3333;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`🚀 ICN PAIM Server running on port ${PORT}`);
   console.log(`🔗 Login URL: https://lti.icnpaim.cl/lti/login`);

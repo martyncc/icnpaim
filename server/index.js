@@ -350,7 +350,7 @@ app.get('/lti/health', (req, res) => {
   });
 });
 
-// Catch-all para React Router (solo en producción)
+// Catch-all para React Router (solo en producción) test?
 if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
   app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '../client/build/index.html'));

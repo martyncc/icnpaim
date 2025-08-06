@@ -78,13 +78,15 @@ app.get('/lti/login', (req, res) => {
       client_id
     } = req.query;
     
-    // Validar parámetros requeridos
-    if (!iss || !login_hint || !client_id) {
-      return res.status(400).json({ 
-        error: 'Faltan parámetros LTI requeridos',
-        received: { iss, login_hint, client_id }
-      });
-    }
+const requiredParams = { iss, login_hint, client_id };
+const missing = Object.entries(requiredParams).filter(([k, v]) => !v);
+if (missing.length) {
+  return res.status(400).json({
+    error: 'Faltan parámetros requeridos',
+    missing: missing.map(([k]) => k)
+  });
+}
+
 
     // Generar state y nonce para seguridad
     const state = generateState();
@@ -96,23 +98,22 @@ app.get('/lti/login', (req, res) => {
     req.session.login_hint = login_hint;
     req.session.lti_message_hint = lti_message_hint;
 
-    // Construir URL de autorización según documentación LTI 1.3
-    const redirectUri = target_link_uri || 'https://lti.icnpaim.cl/lti/launch';
-    const oidcAuthUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorize';
-    
-    const authParams = new URLSearchParams({
-      response_type: 'id_token',
-      scope: 'openid',
-      login_hint: login_hint,
-      lti_message_hint: lti_message_hint || '',
-      state: state,
-      redirect_uri: encodeURIComponent(redirectUri),
-      client_id: client_id,
-      nonce: nonce
-    });
+ // Reemplazá esta parte
+const redirectUri = target_link_uri || 'https://lti.icnpaim.cl/lti/launch';
+const oidcAuthUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorize';
 
-    const finalAuthUrl = `${oidcAuthUrl}?${authParams.toString()}`;
-    
+const authParams = new URLSearchParams({
+  response_type: 'id_token',
+  scope: 'openid',
+  login_hint,
+  lti_message_hint: lti_message_hint || '',
+  state,
+  nonce,
+  client_id,
+  redirect_uri // <- SIN encodeURIComponent aquí
+});
+
+const finalAuthUrl = `${oidcAuthUrl}?${authParams.toString()}`;
     console.log('🔗 Redirigiendo a Blackboard OIDC:', finalAuthUrl);
     res.redirect(finalAuthUrl);
 

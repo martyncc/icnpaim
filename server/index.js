@@ -108,79 +108,27 @@ app.post('/lti/login', async (req, res) => {
   }
 });
 
-// Endpoint de launch LTI - DEBE coincidir con Blackboard config
-app.post('/lti/launch', async (req, res) => {
-  try {
-    console.log('🚀 LTI Launch Request:', req.body);
-    
-    const { id_token, state } = req.body;
-    
-    // Validar state
-    if (state !== req.session.lti_state) {
-      return res.status(400).json({ error: 'Invalid state parameter' });
-    }
-
-    // Decodificar y validar el JWT
-    const tokenData = await ltiService.validateToken(id_token);
-    console.log('✅ Token validated:', tokenData);
-
-    // Extraer información del usuario y curso
-    const userInfo = {
-      lti_id: tokenData.sub,
-      name: tokenData.name || tokenData.given_name + ' ' + tokenData.family_name,
-      email: tokenData.email,
-      roles: tokenData['https://purl.imsglobal.org/spec/lti/claim/roles'] || [],
-      course_id: tokenData['https://purl.imsglobal.org/spec/lti/claim/context']?.id,
-      course_name: tokenData['https://purl.imsglobal.org/spec/lti/claim/context']?.label,
-      platform_id: tokenData.iss
-    };
-
-    console.log('👤 User Info:', userInfo);
-
-    // Registrar/actualizar usuario en WordPress
-    const wpUser = await wordpressService.registerOrLoginUser(userInfo);
-    console.log('✅ WordPress user:', wpUser.name);
-
-    // Crear/actualizar curso si existe
-    let courseData = null;
-    if (userInfo.course_id) {
-      courseData = await courseService.createOrUpdateCourse({
-        lti_course_id: userInfo.course_id,
-        name: userInfo.course_name,
-        wp_user_id: wpUser.id,
-        platform_id: userInfo.platform_id
-      });
-    }
-
-    // Guardar en sesión
-    req.session.user = userInfo;
-    req.session.wpUser = wpUser;
-    req.session.course = courseData;
-    req.session.authenticated = true;
-
-    // Determinar rol y redireccionar
-    const isStudent = userInfo.roles.some(role => 
-      role.includes('Student') || role.includes('Learner')
-    );
-
-    if (isStudent) {
-      res.redirect('/student-dashboard');
-    } else {
-      res.redirect('/admin-dashboard');
-    }
-
-  } catch (error) {
-    console.error('❌ LTI Launch Error:', error);
-    res.status(500).send(`
-      <div style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
-        <h2 style="color: #dc2626;">Error de Conexión LTI</h2>
-        <p>No se pudo completar la conexión con Blackboard.</p>
-        <p><strong>Error:</strong> ${error.message}</p>
-        <a href="/lti/login" style="background: #4c51bf; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reintentar</a>
-      </div>
-    `);
-  }
+app.post('/lti/launch', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+      <meta charset="UTF-8">
+      <title>Lanzamiento exitoso</title>
+      <style>
+        body { font-family: sans-serif; background: #f9fafb; text-align: center; padding: 60px; }
+        h1 { color: #4f46e5; }
+        p { font-size: 18px; color: #1f2937; }
+      </style>
+    </head>
+    <body>
+      <h1>🚀 ¡Lanzamiento exitoso!</h1>
+      <p>Tu conexión LTI fue recibida correctamente.</p>
+    </body>
+    </html>
+  `);
 });
+
 
 // Endpoint JWKS - DEBE coincidir con Blackboard config
 app.get('/.well-known/jwks.json', (req, res) => {

@@ -12,8 +12,8 @@ class LTIService {
     this.oidcAuthUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorize';
     this.platformTokenUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/token';
     this.platformJwksUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/jwks';
-    this.issuer = 'https://blackboard.com'; // Según especificación LTI 1.3
-    this.baseUrl = 'https://icnpaim.cl';
+    this.issuer = 'https://udla-staging.blackboard.com'; // Según especificación LTI 1.3
+    this.baseUrl = 'https://lti.icnpaim.cl';
     
     // Generar par de llaves para firmar tokens
     this.keyPair = this.generateKeyPair();

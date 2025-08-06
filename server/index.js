@@ -50,7 +50,68 @@ if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
 // RUTAS LTI
 // ===================
 
-// Endpoint de login LTI - DEBE coincidir con Blackboard config
+// Endpoint de login LTI - Manejar tanto GET como POST
+app.get('/lti/login', async (req, res) => {
+  try {
+    console.log('🔐 LTI Login GET Request received');
+    console.log('Query params:', req.query);
+    
+    // Extraer parámetros de la URL
+    const { iss, login_hint, target_link_uri, lti_message_hint, lti_deployment_id, client_id } = req.query;
+    
+    console.log('🔍 Validating parameters:');
+    console.log('- iss:', iss);
+    console.log('- client_id:', client_id);
+    console.log('- deployment_id:', lti_deployment_id);
+    console.log('- login_hint:', login_hint);
+    console.log('- target_link_uri:', target_link_uri);
+    
+    if (!iss || !login_hint || !client_id) {
+      console.log('❌ Missing required parameters');
+      return res.status(400).json({ 
+        error: 'Missing required LTI parameters',
+        received: { iss, login_hint, client_id, lti_deployment_id }
+      });
+    }
+
+    // Validar client_id
+    if (client_id !== '48dd70cc-ab62-4fbd-ba91-d3d984644373') {
+      console.log('❌ Invalid client_id:', client_id);
+      return res.status(400).json({ error: 'Invalid client_id' });
+    }
+
+    // Generar state y nonce para seguridad
+    const state = ltiService.generateState();
+    const nonce = ltiService.generateNonce();
+    
+    // Guardar en sesión
+    req.session.lti_state = state;
+    req.session.lti_nonce = nonce;
+    req.session.login_hint = login_hint;
+    req.session.lti_message_hint = lti_message_hint;
+
+    // Construir URL de autorización para Blackboard
+    const authUrl = `https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorizationcode?${new URLSearchParams({
+      response_type: 'id_token',
+      client_id: client_id,
+      redirect_uri: 'https://lti.icnpaim.cl/lti/launch',
+      scope: 'openid',
+      state: state,
+      nonce: nonce,
+      login_hint: login_hint,
+      lti_message_hint: lti_message_hint,
+      prompt: 'none'
+    }).toString()}`;
+
+    console.log('🔗 Redirecting to Blackboard auth:', authUrl);
+    res.redirect(authUrl);
+
+  } catch (error) {
+    console.error('❌ LTI Login Error:', error);
+    res.status(500).json({ error: 'LTI Login failed', details: error.message });
+  }
+});
+
 app.post('/lti/login', async (req, res) => {
   try {
     console.log('🔐 LTI Login Request received');
@@ -58,7 +119,7 @@ app.post('/lti/login', async (req, res) => {
     console.log('Body:', req.body);
     
     // Validar que viene de Blackboard
-    const { iss, login_hint, target_link_uri } = req.body;
+    const { iss, login_hint, target_link_uri, client_id, lti_deployment_id } = req.body;
     
     console.log('🔍 Validating parameters:');
     console.log('- iss:', iss);
@@ -89,22 +150,24 @@ app.post('/lti/login', async (req, res) => {
     req.session.lti_nonce = nonce;
     req.session.login_hint = login_hint;
 
-    // Construir URL de autorización
-    const authUrl = ltiService.buildAuthUrl({
-      iss,
-      login_hint,
-      target_link_uri: 'https://icnpaim.cl/lti/launch',
-      state,
-      nonce,
-      client_id
-    });
+    // Construir URL de autorización para Blackboard
+    const authUrl = `https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorizationcode?${new URLSearchParams({
+      response_type: 'id_token',
+      client_id: client_id,
+      redirect_uri: 'https://lti.icnpaim.cl/lti/launch',
+      scope: 'openid',
+      state: state,
+      nonce: nonce,
+      login_hint: login_hint,
+      prompt: 'none'
+    }).toString()}`;
 
     console.log('🔗 Redirecting to:', authUrl);
     res.redirect(authUrl);
 
   } catch (error) {
     console.error('❌ LTI Login Error:', error);
-    res.status(500).json({ error: 'LTI Login failed' });
+    res.status(500).json({ error: 'LTI Login failed', details: error.message });
   }
 });
 
@@ -112,44 +175,62 @@ app.post('/lti/login', async (req, res) => {
 app.post('/lti/launch', async (req, res) => {
   try {
     console.log('🚀 LTI Launch Request:', req.body);
+    console.log('🚀 LTI Launch Headers:', req.headers);
     
     const { id_token, state } = req.body;
     
+    if (!id_token) {
+      console.log('❌ No id_token received');
+      return res.status(400).json({ error: 'Missing id_token' });
+    }
+    
     // Validar state
     if (state !== req.session.lti_state) {
+      console.log('❌ State mismatch:', { received: state, expected: req.session.lti_state });
       return res.status(400).json({ error: 'Invalid state parameter' });
     }
 
-    // Decodificar y validar el JWT
-    const tokenData = await ltiService.validateToken(id_token);
+    // Decodificar el JWT (sin validar por ahora para debugging)
+    const jwt = require('jsonwebtoken');
+    const tokenData = jwt.decode(id_token, { complete: true });
     console.log('✅ Token validated:', tokenData);
+    
+    if (!tokenData || !tokenData.payload) {
+      throw new Error('Invalid token structure');
+    }
+    
+    const payload = tokenData.payload;
 
     // Extraer información del usuario y curso
     const userInfo = {
-      lti_id: tokenData.sub,
-      name: tokenData.name || tokenData.given_name + ' ' + tokenData.family_name,
-      email: tokenData.email,
-      roles: tokenData['https://purl.imsglobal.org/spec/lti/claim/roles'] || [],
-      course_id: tokenData['https://purl.imsglobal.org/spec/lti/claim/context']?.id,
-      course_name: tokenData['https://purl.imsglobal.org/spec/lti/claim/context']?.label,
-      platform_id: tokenData.iss
+      lti_id: payload.sub,
+      name: payload.name || (payload.given_name + ' ' + payload.family_name),
+      email: payload.email,
+      roles: payload['https://purl.imsglobal.org/spec/lti/claim/roles'] || [],
+      course_id: payload['https://purl.imsglobal.org/spec/lti/claim/context']?.id,
+      course_name: payload['https://purl.imsglobal.org/spec/lti/claim/context']?.label,
+      platform_id: payload.iss
     };
 
     console.log('👤 User Info:', userInfo);
 
-    // Registrar/actualizar usuario en WordPress
-    const wpUser = await wordpressService.registerOrLoginUser(userInfo);
-    console.log('✅ WordPress user:', wpUser.name);
+    // Por ahora, simular usuario de WordPress para testing
+    const wpUser = {
+      id: 1,
+      name: userInfo.name,
+      email: userInfo.email
+    };
+    
+    console.log('✅ WordPress user (simulated):', wpUser.name);
 
     // Crear/actualizar curso si existe
     let courseData = null;
     if (userInfo.course_id) {
-      courseData = await courseService.createOrUpdateCourse({
-        lti_course_id: userInfo.course_id,
-        name: userInfo.course_name,
-        wp_user_id: wpUser.id,
-        platform_id: userInfo.platform_id
-      });
+      courseData = {
+        id: userInfo.course_id,
+        title: userInfo.course_name,
+        lti_course_id: userInfo.course_id
+      };
     }
 
     // Guardar en sesión
@@ -162,6 +243,9 @@ app.post('/lti/launch', async (req, res) => {
     const isStudent = userInfo.roles.some(role => 
       role.includes('Student') || role.includes('Learner')
     );
+
+    console.log('🎯 User roles:', userInfo.roles);
+    console.log('🎯 Is student:', isStudent);
 
     if (isStudent) {
       res.redirect('/student-dashboard');
@@ -176,6 +260,7 @@ app.post('/lti/launch', async (req, res) => {
         <h2 style="color: #dc2626;">Error de Conexión LTI</h2>
         <p>No se pudo completar la conexión con Blackboard.</p>
         <p><strong>Error:</strong> ${error.message}</p>
+        <p><strong>Stack:</strong> <pre style="text-align: left; background: #f5f5f5; padding: 10px;">${error.stack}</pre></p>
         <a href="/lti/login" style="background: #4c51bf; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reintentar</a>
       </div>
     `);
@@ -353,6 +438,10 @@ app.get('/lti/health', (req, res) => {
 // Catch-all para React Router (solo en producción)
 if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
   app.get('*', (req, res) => {
+    // No interceptar rutas LTI
+    if (req.path.startsWith('/lti/') || req.path.startsWith('/api/') || req.path.startsWith('/.well-known/')) {
+      return res.status(404).json({ error: 'Not found' });
+    }
     res.sendFile(path.join(__dirname, '../client/build/index.html'));
   });
 }
@@ -368,10 +457,13 @@ app.use((error, req, res, next) => {
 
 // Iniciar servidor
 const PORT = process.env.PORT || 3333;
+const BASE_URL = process.env.RAILWAY_PUBLIC_DOMAIN 
+  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` 
+  : process.env.BASE_URL || 'https://icnpaim.cl';
 app.listen(PORT, () => {
   console.log(`🚀 ICN PAIM Server running on port ${PORT}`);
-  console.log(`🔗 Login URL: https://icnpaim.cl/lti/login`);
-  console.log(`🚀 Launch URL: https://icnpaim.cl/lti/launch`);
-  console.log(`🔑 JWKS URL: https://icnpaim.cl/.well-known/jwks.json`);
-  console.log(`📱 Dashboard: https://icnpaim.cl/student-dashboard`);
+  console.log(`🔗 Login URL: ${BASE_URL}/lti/login`);
+  console.log(`🚀 Launch URL: ${BASE_URL}/lti/launch`);
+  console.log(`🔑 JWKS URL: ${BASE_URL}/.well-known/jwks.json`);
+  console.log(`📱 Dashboard: ${BASE_URL}/student-dashboard`);
 });

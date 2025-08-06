@@ -206,8 +206,8 @@ app.post('/lti/login', async (req, res) => {
 app.post('/lti/launch', async (req, res) => {
   try {
     console.log('🚀 LTI Launch Request received from Developer Portal');
+    console.log('Content-Type:', req.headers['content-type']);
     console.log('Body keys:', Object.keys(req.body));
-    console.log('Headers:', req.headers);
     
     const { id_token, state } = req.body;
     
@@ -224,36 +224,91 @@ app.post('/lti/launch', async (req, res) => {
 
     console.log('✅ State validated successfully');
     
-    // Decodificar el JWT token de Blackboard
+    // Decodificar el JWT token según especificación LTI 1.3
     const jwt = require('jsonwebtoken');
     const tokenData = jwt.decode(id_token, { complete: true });
-    console.log('📋 Token header:', tokenData?.header);
-    console.log('📋 Token payload keys:', tokenData?.payload ? Object.keys(tokenData.payload) : 'none');
     
     if (!tokenData || !tokenData.payload) {
-      throw new Error('Invalid token structure');
+      throw new Error('Invalid JWT token structure');
     }
     
+    console.log('📋 JWT Header:', tokenData.header);
+    console.log('📋 JWT Algorithm:', tokenData.header.alg);
+    console.log('📋 JWT Key ID:', tokenData.header.kid);
+    
     const payload = tokenData.payload;
-    console.log('👤 User claims:', {
+    
+    // Validar claims requeridos según LTI 1.3 spec
+    const requiredClaims = [
+      'iss', 'sub', 'aud', 'exp', 'iat', 'nonce',
+      'https://purl.imsglobal.org/spec/lti/claim/message_type',
+      'https://purl.imsglobal.org/spec/lti/claim/version',
+      'https://purl.imsglobal.org/spec/lti/claim/deployment_id'
+    ];
+    
+    for (const claim of requiredClaims) {
+      if (!payload[claim]) {
+        console.log(`❌ Missing required claim: ${claim}`);
+        throw new Error(`Missing required LTI claim: ${claim}`);
+      }
+    }
+    
+    // Validar nonce
+    if (payload.nonce !== req.session.lti_nonce) {
+      console.log('❌ Nonce mismatch:', { received: payload.nonce, expected: req.session.lti_nonce });
+      throw new Error('Invalid nonce');
+    }
+    
+    // Validar message_type
+    const messageType = payload['https://purl.imsglobal.org/spec/lti/claim/message_type'];
+    if (messageType !== 'LtiResourceLinkRequest') {
+      console.log('❌ Invalid message type:', messageType);
+      throw new Error('Invalid LTI message type');
+    }
+    
+    // Validar version
+    const version = payload['https://purl.imsglobal.org/spec/lti/claim/version'];
+    if (version !== '1.3.0') {
+      console.log('❌ Invalid LTI version:', version);
+      throw new Error('Invalid LTI version');
+    }
+    
+    console.log('✅ All LTI 1.3 claims validated');
+    console.log('📋 LTI Claims:', {
+      message_type: messageType,
+      version: version,
+      deployment_id: payload['https://purl.imsglobal.org/spec/lti/claim/deployment_id'],
       sub: payload.sub,
-      name: payload.name,
-      email: payload.email,
-      iss: payload.iss
+      iss: payload.iss,
+      aud: payload.aud
     });
 
-    // Extraer información del usuario y curso según claims LTI
+    // Extraer información del usuario según claims LTI 1.3
+    const context = payload['https://purl.imsglobal.org/spec/lti/claim/context'];
+    const resourceLink = payload['https://purl.imsglobal.org/spec/lti/claim/resource_link'];
+    const roles = payload['https://purl.imsglobal.org/spec/lti/claim/roles'] || [];
+    
     const userInfo = {
       lti_id: payload.sub,
-      name: payload.name || (payload.given_name + ' ' + payload.family_name),
+      name: payload.name || `${payload.given_name || ''} ${payload.family_name || ''}`.trim() || 'Usuario',
       email: payload.email,
-      roles: payload['https://purl.imsglobal.org/spec/lti/claim/roles'] || [],
-      course_id: payload['https://purl.imsglobal.org/spec/lti/claim/context']?.id,
-      course_name: payload['https://purl.imsglobal.org/spec/lti/claim/context']?.label,
-      platform_id: payload.iss
+      roles: roles,
+      course_id: context?.id,
+      course_name: context?.label || context?.title,
+      resource_link_id: resourceLink?.id,
+      resource_link_title: resourceLink?.title,
+      deployment_id: payload['https://purl.imsglobal.org/spec/lti/claim/deployment_id'],
+      platform_id: payload.iss,
+      target_link_uri: payload['https://purl.imsglobal.org/spec/lti/claim/target_link_uri']
     };
 
-    console.log('👤 User Info:', userInfo);
+    console.log('👤 Extracted User Info:', {
+      name: userInfo.name,
+      email: userInfo.email,
+      roles: userInfo.roles,
+      course: userInfo.course_name,
+      deployment_id: userInfo.deployment_id
+    });
 
     // Integrar con WordPress (por ahora simulado)
     const wpUser = {
@@ -283,11 +338,17 @@ app.post('/lti/launch', async (req, res) => {
 
     // Determinar rol del usuario y redireccionar apropiadamente
     const isStudent = userInfo.roles.some(role => 
-      role.includes('Student') || role.includes('Learner')
+      role.includes('Student') || 
+      role.includes('Learner') ||
+      role === 'http://purl.imsglobal.org/vocab/lis/v2/membership#Learner'
     );
     
     const isInstructor = userInfo.roles.some(role =>
-      role.includes('Instructor') || role.includes('TeachingAssistant') || role.includes('Administrator')
+      role.includes('Instructor') || 
+      role.includes('TeachingAssistant') || 
+      role.includes('Administrator') ||
+      role === 'http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor' ||
+      role === 'http://purl.imsglobal.org/vocab/lis/v2/membership#TeachingAssistant'
     );
 
     console.log('🎯 User roles:', userInfo.roles);

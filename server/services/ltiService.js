@@ -8,15 +8,28 @@ class LTIService {
     this.clientId = '48dd70cc-ab62-4fbd-ba91-d3d984644373';
     this.deploymentId = '2b286722-4ef6-4dda-a756-eec5dca12441';
     
-    // URLs oficiales según documentación
+    // URLs según documentación LTI 1.3 y Blackboard
     this.oidcAuthUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/authorize';
     this.platformTokenUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/token';
     this.platformJwksUrl = 'https://udla-staging.blackboard.com/learn/api/public/v1/oauth2/jwks';
-    this.issuer = 'https://blackboard.com';
+    this.issuer = 'https://blackboard.com'; // Según especificación LTI 1.3
     this.baseUrl = 'https://icnpaim.cl';
     
     // Generar par de llaves para firmar tokens
     this.keyPair = this.generateKeyPair();
+    
+    // Claims LTI 1.3 estándar
+    this.ltiClaims = {
+      MESSAGE_TYPE: 'https://purl.imsglobal.org/spec/lti/claim/message_type',
+      VERSION: 'https://purl.imsglobal.org/spec/lti/claim/version',
+      DEPLOYMENT_ID: 'https://purl.imsglobal.org/spec/lti/claim/deployment_id',
+      TARGET_LINK_URI: 'https://purl.imsglobal.org/spec/lti/claim/target_link_uri',
+      RESOURCE_LINK: 'https://purl.imsglobal.org/spec/lti/claim/resource_link',
+      ROLES: 'https://purl.imsglobal.org/spec/lti/claim/roles',
+      CONTEXT: 'https://purl.imsglobal.org/spec/lti/claim/context',
+      TOOL_PLATFORM: 'https://purl.imsglobal.org/spec/lti/claim/tool_platform',
+      LAUNCH_PRESENTATION: 'https://purl.imsglobal.org/spec/lti/claim/launch_presentation'
+    };
   }
 
   /**
@@ -90,53 +103,80 @@ class LTIService {
   }
 
   /**
-   * Validar token JWT de Blackboard
+   * Validar token JWT según especificación LTI 1.3
    */
   async validateToken(idToken) {
     try {
-      // Decodificar el header para obtener el kid
+      console.log('🔍 Validating JWT token...');
+      
+      // Decodificar header para obtener algoritmo y kid
       const header = jwt.decode(idToken, { complete: true })?.header;
       if (!header || !header.kid) {
-        throw new Error('Invalid token header');
+        throw new Error('Invalid JWT header or missing kid');
+      }
+      
+      console.log('📋 JWT Header:', header);
+      
+      // Validar algoritmo (debe ser RS256 según LTI 1.3)
+      if (header.alg !== 'RS256') {
+        throw new Error(`Invalid algorithm: ${header.alg}. Expected RS256`);
       }
 
-      // Obtener las claves públicas de Blackboard
-      const jwks = await this.getJWKS();
+      // Obtener JWKS de Blackboard
+      console.log('🔑 Fetching JWKS from Blackboard...');
+      const jwks = await this.getPlatformJWKS();
       const key = jwks.keys.find(k => k.kid === header.kid);
       
       if (!key) {
-        throw new Error('Key not found in JWKS');
+        throw new Error(`Key with kid '${header.kid}' not found in JWKS`);
       }
+      
+      console.log('✅ Found matching key in JWKS');
 
-      // Convertir JWK a PEM
+      // Convertir JWK a PEM para verificación
       const publicKey = this.jwkToPem(key);
 
-      // Verificar y decodificar el token
+      // Verificar JWT con clave pública
+      console.log('🔐 Verifying JWT signature...');
       const decoded = jwt.verify(idToken, publicKey, {
         algorithms: ['RS256'],
         audience: this.clientId,
-        issuer: 'https://udla-staging.blackboard.com'
+        issuer: this.issuer,
+        clockTolerance: 60 // 60 segundos de tolerancia para diferencias de reloj
       });
 
+      console.log('✅ JWT signature verified successfully');
       return decoded;
     } catch (error) {
-      console.error('Token validation error:', error);
+      console.error('❌ JWT validation error:', error.message);
       throw new Error(`Token validation failed: ${error.message}`);
     }
   }
 
   /**
-   * Obtener JWKS de Blackboard
+   * Obtener JWKS de la plataforma Blackboard
    */
-  async getJWKS() {
+  async getPlatformJWKS() {
     try {
+      console.log('📡 Fetching JWKS from:', this.platformJwksUrl);
       const response = await axios.get(this.platformJwksUrl, {
-        timeout: 10000
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'ICN-PAIM-LTI-Tool/1.0'
+        }
       });
+      
+      console.log('✅ JWKS fetched successfully');
+      console.log('🔑 Available keys:', response.data.keys?.length || 0);
+      
       return response.data;
     } catch (error) {
-      console.error('JWKS fetch error:', error);
-      throw new Error('Failed to fetch JWKS');
+      console.error('❌ JWKS fetch error:', error.message);
+      if (error.response) {
+        console.error('❌ JWKS response status:', error.response.status);
+        console.error('❌ JWKS response data:', error.response.data);
+      }
+      throw new Error(`Failed to fetch JWKS: ${error.message}`);
     }
   }
 

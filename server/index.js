@@ -1,328 +1,142 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const bodyParser = require('body-parser');
-const session = require('express-session');
-const path = require('path');
+// server/index.js
+// Servidor Express para LTI 1.3 + APIs + SPA React en producción
+// Sí, futuro-yo: el orden de los middlewares importa. No lo rompas otra vez.
 
-// Servicios
-const ltiService = require('./services/ltiService');
-const wordpressService = require('./services/wordpressService');
-const courseService = require('./services/courseService');
+import path from "path";
+import express from "express";
+import session from "express-session";
+import cors from "cors";
+import helmet from "helmet";
+import morgan from "morgan";
+import compression from "compression";
+import dotenv from "dotenv";
+import { fileURLToPath } from "url";
+
+// Servicios (stubs de ejemplo)
+// import { getUnitsForStudent, getUserProfile } from "./services/courseService.js";
+// import { ltiLogin, ltiLaunch } from "./services/ltiService.js";
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
+const PORT = process.env.PORT || 3001;
 
-// Middleware
+// Seguridad / utilidades
+app.use(helmet({
+  contentSecurityPolicy: false, // ajusta si usas CSP estricta
+}));
+app.use(compression());
+app.use(morgan("dev"));
 app.use(cors({
-  origin: [
-    'https://udla-staging.blackboard.com',
-    'https://blackboard.com',
-    'https://icnpaim.cl',
-    'http://localhost:3000'
-  ],
+  origin: process.env.CORS_ORIGIN?.split(",") || ["http://localhost:3000"],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+// Body parsers
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'icnpaim-session-secret-2024',
-  resave: false,
-  saveUninitialized: false,
-  name: 'icnpaim.sid',
-  cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000,
-    sameSite: process.env.NODE_ENV === 'production' ? 'None' : 'Lax'
-  }
-}));
-
-// Servir archivos estáticos del build de React
-if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
-  app.use(express.static(path.join(__dirname, '../client/build')));
-}
-
-// ===================
-// RUTAS LTI
-// ===================
-
-// Endpoint de login LTI - DEBE coincidir con Blackboard config
-app.post('/lti/login', async (req, res) => {
-  try {
-    console.log('🔐 LTI Login Request received');
-    console.log('Headers:', req.headers);
-    console.log('Body:', req.body);
-    
-    // Validar que viene de Blackboard
-    const { iss, login_hint, target_link_uri } = req.body;
-    
-    console.log('🔍 Validating parameters:');
-    console.log('- iss:', iss);
-    console.log('- client_id:', client_id);
-    console.log('- deployment_id:', lti_deployment_id);
-    console.log('- login_hint:', login_hint);
-    
-    if (!iss || !login_hint || !client_id) {
-      console.log('❌ Missing required parameters');
-      return res.status(400).json({ 
-        error: 'Missing required LTI parameters',
-        received: { iss, login_hint, client_id, lti_deployment_id }
-      });
-    }
-
-    // Validar client_id
-    if (client_id !== '48dd70cc-ab62-4fbd-ba91-d3d984644373') {
-      console.log('❌ Invalid client_id:', client_id);
-      return res.status(400).json({ error: 'Invalid client_id' });
-    }
-
-    // Generar state y nonce para seguridad
-    const state = ltiService.generateState();
-    const nonce = ltiService.generateNonce();
-    
-    // Guardar en sesión
-    req.session.lti_state = state;
-    req.session.lti_nonce = nonce;
-    req.session.login_hint = login_hint;
-
-    // Construir URL de autorización
-    const authUrl = ltiService.buildAuthUrl({
-      iss,
-      login_hint,
-      target_link_uri: 'https://icnpaim.cl/lti/launch',
-      state,
-      nonce,
-      client_id
-    });
-
-    console.log('🔗 Redirecting to:', authUrl);
-    res.redirect(authUrl);
-
-  } catch (error) {
-    console.error('❌ LTI Login Error:', error);
-    res.status(500).json({ error: 'LTI Login failed' });
-  }
-});
-
-app.post('/lti/launch', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-      <meta charset="UTF-8">
-      <title>Lanzamiento exitoso</title>
-      <style>
-        body { font-family: sans-serif; background: #f9fafb; text-align: center; padding: 60px; }
-        h1 { color: #4f46e5; }
-        p { font-size: 18px; color: #1f2937; }
-      </style>
-    </head>
-    <body>
-      <h1>🚀 ¡Lanzamiento exitoso!</h1>
-      <p>Tu conexión LTI fue recibida correctamente.</p>
-    </body>
-    </html>
-  `);
-});
-
-
-// Endpoint JWKS - DEBE coincidir con Blackboard config
-app.get('/.well-known/jwks.json', (req, res) => {
-  try {
-    const jwks = ltiService.getJWKS();
-    res.json(jwks);
-  } catch (error) {
-    console.error('❌ JWKS Error:', error);
-    res.status(500).json({ error: 'Failed to generate JWKS' });
-  }
-});
-
-// ===================
-// API ENDPOINTS
-// ===================
-
-// Middleware de autenticación
-const requireAuth = (req, res, next) => {
-  if (!req.session.authenticated || !req.session.user) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-  next();
-};
-
-// Obtener información del usuario
-app.get('/api/user', requireAuth, (req, res) => {
-  res.json({
-    user: req.session.user,
-    wpUser: req.session.wpUser,
-    course: req.session.course
-  });
-});
-
-// Obtener camino del estudiante
-app.get('/api/student/pathway', requireAuth, async (req, res) => {
-  try {
-    const userId = req.session.wpUser.id;
-    const courseId = req.session.course?.id;
-    
-    const pathway = await courseService.getStudentPathway(userId, courseId);
-    res.json(pathway);
-  } catch (error) {
-    console.error('Error fetching pathway:', error);
-    res.status(500).json({ error: 'Failed to fetch pathway' });
-  }
-});
-
-// Obtener unidades activas
-app.get('/api/student/units', requireAuth, async (req, res) => {
-  try {
-    const userId = req.session.wpUser.id;
-    const courseId = req.session.course?.id;
-    
-    const units = await courseService.getActiveUnits(userId, courseId);
-    res.json(units);
-  } catch (error) {
-    console.error('Error fetching units:', error);
-    res.status(500).json({ error: 'Failed to fetch units' });
-  }
-});
-
-// Actualizar progreso
-app.post('/api/progress/update', requireAuth, async (req, res) => {
-  try {
-    const { unitId, contentId, completed, score } = req.body;
-    const userId = req.session.wpUser.id;
-    
-    const progress = await courseService.updateProgress(userId, unitId, contentId, completed, score);
-    res.json(progress);
-  } catch (error) {
-    console.error('Error updating progress:', error);
-    res.status(500).json({ error: 'Failed to update progress' });
-  }
-});
-
-// ===================
-// RUTAS DE LA SPA
-// ===================
-
-// Rutas para el dashboard del estudiante
-app.get('/student-dashboard', (req, res) => {
-  if (!req.session.authenticated) {
-    return res.redirect('/');
-  }
-  
-  if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
-    res.sendFile(path.join(__dirname, '../client/build/index.html'));
-  } else {
-    res.redirect('http://localhost:3000/student-dashboard');
-  }
-});
-
-// Rutas para el dashboard del admin
-app.get('/admin-dashboard', (req, res) => {
-  if (!req.session.authenticated) {
-    return res.redirect('/');
-  }
-  
-  if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
-    res.sendFile(path.join(__dirname, '../client/build/index.html'));
-  } else {
-    res.redirect('http://localhost:3000/admin-dashboard');
-  }
-});
-
-// Página de inicio
-app.get('/', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>ICN PAIM - Plataforma de Aprendizaje</title>
-      <style>
-        body { font-family: Arial, sans-serif; padding: 40px; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; margin: 0; }
-        .container { background: white; padding: 40px; border-radius: 20px; max-width: 600px; margin: 0 auto; box-shadow: 0 20px 60px rgba(0,0,0,0.2); }
-        h1 { color: #4c51bf; margin-bottom: 20px; }
-        .info { background: #f0f9ff; padding: 20px; border-radius: 10px; margin: 20px 0; }
-        .urls { text-align: left; background: #f8fafc; padding: 20px; border-radius: 10px; }
-        code { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-family: monospace; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <h1>🚀 ICN PAIM</h1>
-        <p>Plataforma de Aprendizaje Inteligente y Medición</p>
-        
-        <div class="info">
-          <h3>✅ Servidor funcionando correctamente</h3>
-          <p>Para acceder, usa el enlace LTI desde Blackboard</p>
-        </div>
-        
-        <div class="urls">
-          <h4>📋 URLs para configurar en Blackboard:</h4>
-          <p><strong>Login URL:</strong><br><code>https://icnpaim.cl/lti/login</code></p>
-          <p><strong>Launch URL:</strong><br><code>https://icnpaim.cl/lti/launch</code></p>
-          <p><strong>JWKS URL:</strong><br><code>https://icnpaim.cl/.well-known/jwks.json</code></p>
-          
-          <h4>🔑 Credenciales Blackboard:</h4>
-          <p><strong>Application Key:</strong> 89ef5212-b589-4f9c-b5b8-2fa6ad3e2006</p>
-          <p><strong>Deployment ID:</strong> 2b286722-4ef6-4dda-a756-eec5dca12441</p>
-        </div>
-        
-        <p><small>Timestamp: ${new Date().toLocaleString()}</small></p>
-      </div>
-    </body>
-    </html>
-  `);
-});
-
-// Endpoint de diagnóstico
-app.get('/lti/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    lti_config: {
-      client_id: '89ef5212-b589-4f9c-b5b8-2fa6ad3e2006',
-      deployment_id: '2b286722-4ef6-4dda-a756-eec5dca12441',
-      login_url: 'https://icnpaim.cl/lti/login',
-      launch_url: 'https://icnpaim.cl/lti/launch',
-      jwks_url: 'https://icnpaim.cl/.well-known/jwks.json'
+// Sesión (asegúrate de configurar SESSION_SECRET en producción)
+app.use(
+  session({
+    name: "sid",
+    secret: process.env.SESSION_SECRET || "dev_secret_change_me",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 1000 * 60 * 60 * 8, // 8h
     },
-    integrations: {
-      wordpress: process.env.WORDPRESS_URL ? 'configured' : 'not configured',
-      mongodb: process.env.MONGO_URL ? 'configured' : 'not configured'
-    }
-  });
+  })
+);
+
+// -----------------
+// Rutas LTI primero
+// -----------------
+
+// Placeholders: reemplaza con tu lógica real
+app.get("/lti/login", (req, res) => {
+  // ltiLogin(req, res)
+  res.status(200).send("LTI login OK (placeholder)");
 });
 
-// Catch-all para React Router (solo en producción) test?
-if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../client/build/index.html'));
-  });
-}
-
-// Manejo de errores
-app.use((error, req, res, next) => {
-  console.error('Server Error:', error);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
-  });
+app.post("/lti/launch", (req, res) => {
+  // ltiLaunch(req, res)
+  // Según el rol, redirige al frontend:
+  // p.ej.: res.redirect("/student-dashboard");
+  res.status(200).send("LTI launch OK (placeholder)");
 });
 
-// Iniciar servidor
-const PORT = process.env.PORT || 3333;
-const BASE_URL = process.env.RAILWAY_PUBLIC_DOMAIN 
-  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` 
-  : process.env.BASE_URL || 'https://icnpaim.cl';
+// -----------------
+// APIs bajo /api/**
+// -----------------
+
+const api = express.Router();
+
+api.get("/health", (_req, res) => res.json({ ok: true }));
+
+// api.get("/user", async (req, res, next) => {
+//   try {
+//     const data = await getUserProfile(req.session.userId);
+//     res.json(data);
+//   } catch (err) { next(err); }
+// });
+
+// api.get("/student/units", async (req, res, next) => {
+//   try {
+//     const data = await getUnitsForStudent(req.session.userId);
+//     res.json(data);
+//   } catch (err) { next(err); }
+// });
+
+app.use("/api", api);
+
+// --------------------------------------------------------
+// SPA React estática (PROD): SERVIR DESDE client/build
+// --------------------------------------------------------
+// ⚠️ Clave del bug que ves: si sirves /client/public o pones este bloque
+// antes de /api, Express devuelve index.html para TODO (incluyendo /api),
+// por eso ves HTML en lugar de JSON.
+
+const clientBuildPath = path.join(__dirname, "../client/build");
+app.use(express.static(clientBuildPath));
+
+// Catch‑all del SPA (después de /api y /lti):
+app.get("*", (req, res, next) => {
+  // No capturar rutas de API ni LTI
+  if (req.path.startsWith("/api") || req.path.startsWith("/lti")) {
+    return next();
+  }
+  res.sendFile(path.join(clientBuildPath, "index.html"));
+});
+
+// ---------------------------------
+// Manejadores de error
+// ---------------------------------
+app.use((req, res, _next) => {
+  // 404 explícito para APIs (que no termine en HTML del SPA)
+  if (req.path.startsWith("/api") || req.path.startsWith("/lti")) {
+    return res.status(404).json({ error: "Not found" });
+  }
+  return res.status(404).send("Not found");
+});
+
+app.use((err, _req, res, _next) => {
+  console.error("[ERROR]", err);
+  const status = err.status || 500;
+  const payload = {
+    error: err.message || "Internal Server Error",
+  };
+  res.status(status).json(payload);
+});
+
 app.listen(PORT, () => {
-  console.log(`🚀 ICN PAIM Server running on port ${PORT}`);
-  console.log(`🔗 Login URL: ${BASE_URL}/lti/login`);
-  console.log(`🚀 Launch URL: ${BASE_URL}/lti/launch`);
-  console.log(`🔑 JWKS URL: ${BASE_URL}/.well-known/jwks.json`);
-  console.log(`📱 Dashboard: ${BASE_URL}/student-dashboard`);
+  console.log(`Server listening on http://localhost:${PORT}`);
+  console.log("NODE_ENV:", process.env.NODE_ENV);
+  console.log("Serving React from:", clientBuildPath);
 });

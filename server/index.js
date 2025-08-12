@@ -2,15 +2,14 @@
 // Servidor Express para LTI 1.3 + APIs + SPA React en producción
 // Sí, futuro-yo: el orden de los middlewares importa. No lo rompas otra vez.
 
-import path from "path";
-import express from "express";
-import session from "express-session";
-import cors from "cors";
-import helmet from "helmet";
-import morgan from "morgan";
-import compression from "compression";
-import dotenv from "dotenv";
-import { fileURLToPath } from "url";
+const path = require("path");
+const express = require("express");
+const session = require("express-session");
+const cors = require("cors");
+const helmet = require("helmet");
+const morgan = require("morgan");
+const compression = require("compression");
+const dotenv = require("dotenv");
 
 // Servicios (stubs de ejemplo)
 // import { getUnitsForStudent, getUserProfile } from "./services/courseService.js";

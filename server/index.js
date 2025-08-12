@@ -116,7 +116,7 @@ app.get("*", (req, res, next) => {
 });
 
 // ---------------------------------
-// Manejadores de error
+// Manejadores de error holi
 // ---------------------------------
 app.use((req, res, _next) => {
   // 404 explícito para APIs (que no termine en HTML del SPA)

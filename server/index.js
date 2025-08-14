@@ -8,7 +8,7 @@ const session = require('express-session');
 const path = require('path');
 const fs = require('fs');
 
-// Servicios
+// Servicios (asegúrate de que existan)
 const ltiService = require('./services/ltiService');
 const wordpressService = require('./services/wordpressService');
 const courseService = require('./services/courseService');
@@ -104,7 +104,7 @@ app.all(/^\/public(\/.*)?$/, (_req, res) => res.status(404).send('Not found'));
 
 /* ========= LTI ROUTES ========= */
 
-// GET a /lti/login y /lti/launch -> 405 (para que NO caigan en la SPA)
+// GET a /lti/login y /lti/launch -> 405 (para NO caer en la SPA)
 app.get('/lti/login', (_req, res) => res.status(405).send('Use POST from the LMS (OIDC login-init).'));
 app.get('/lti/launch', (_req, res) => res.status(405).send('Use POST from the LMS with id_token.'));
 
@@ -196,8 +196,7 @@ app.post('/lti/launch', async (req, res) => {
     const absolute = `${BASE_URL}${dest}`;
     console.log('[LTI] Redirecting to', absolute);
 
-    // 303: convierte POST -> GET en la redirección
-    return res.redirect(303, absolute);
+    return res.redirect(303, absolute); // POST->GET
   } catch (error) {
     console.error('❌ LTI Launch Error:', error);
     return res.status(400).send('LTI Launch failed');
@@ -213,6 +212,21 @@ app.get('/.well-known/jwks.json', (_req, res) => {
     console.error('❌ JWKS Error:', error);
     res.status(500).json({ error: 'Failed to generate JWKS' });
   }
+});
+
+// Healthcheck PÚBLICO (no debe pedir auth)
+app.get('/lti/health', (_req, res) => {
+  res.json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV || 'development',
+    lti: {
+      client_id: CLIENT_ID, deployment_id: DEPLOYMENT_ID,
+      login_url: `${BASE_URL}/lti/login`,
+      launch_url: `${BASE_URL}/lti/launch`,
+      jwks_url: `${BASE_URL}/.well-known/jwks.json`
+    }
+  });
 });
 
 /* ========= API PROTEGIDA ========= */
@@ -260,60 +274,48 @@ app.post('/api/progress/update', requireAuth, async (req, res) => {
   }
 });
 
-/* ========= SPA EN RAÍZ (PROTEGIDA) ========= */
+/* ========= SPA EN RAÍZ ========= */
 const clientBuildDir = path.join(__dirname, '../client/build');
 console.log('[BOOT] build exists:', fs.existsSync(path.join(clientBuildDir, 'index.html')));
 
+// 1) sirve estáticos (JS/CSS/img). Públicos está bien.
 if (isProd) {
-  // Estáticos del build en raíz, pero protegidos por sesión
-  app.use('/', requireAuth, express.static(clientBuildDir, { index: false }));
+  app.use(express.static(clientBuildDir, { index: false }));
+}
 
-  // Entradas de la SPA
-  app.get('/student-dashboard', requireAuth, (req, res) => {
+// 2) HTML de la SPA (rutas protegidas)
+if (isProd) {
+  app.get('/student-dashboard', requireAuth, (_req, res) => {
     console.log('[SPA] index for /student-dashboard');
     return res.sendFile(path.join(clientBuildDir, 'index.html'));
   });
 
-  app.get('/admin-dashboard', requireAuth, (req, res) => {
+  app.get('/admin-dashboard', requireAuth, (_req, res) => {
     console.log('[SPA] index for /admin-dashboard');
     return res.sendFile(path.join(clientBuildDir, 'index.html'));
   });
 
-  // Catch-all SOLO para rutas que NO sean /api, /lti o /.well-known
+  // Catch-all: todo lo que no sea /api, /lti o /.well-known -> SPA (protegida)
   app.get(/^\/(?!api\/|lti\/|\.well-known\/).*/, requireAuth, (req, res) => {
     console.log('[SPA] index for', req.originalUrl);
     res.sendFile(path.join(clientBuildDir, 'index.html'));
   });
 }
 
-/* ========= AUX / HEALTH ========= */
+// Página mínima para raíz (solo info, NO SPA)
 app.get('/', (_req, res) => {
-  res.send(`
+  res.type('html').send(`
     <!DOCTYPE html><html><head><meta charset="utf-8"><title>ICN PAIM</title></head>
     <body>
       <h3>Servidor OK</h3>
       <ul>
-        <li>Login URL: <code>${BASE_URL}/lti/login</code></li>
-        <li>Launch URL: <code>${BASE_URL}/lti/launch</code></li>
-        <li>JWKS URL: <code>${BASE_URL}/.well-known/jwks.json</code></li>
+        <li>Login URL: <code>${BASE_URL}/lti/login</code> (POST only)</li>
+        <li>Launch URL: <code>${BASE_URL}/lti/launch</code> (POST only)</li>
+        <li>Health: <code>${BASE_URL}/lti/health</code> (200)</li>
       </ul>
       <p>Build detectado: ${fs.existsSync(path.join(clientBuildDir, 'index.html'))}</p>
     </body></html>
   `);
-});
-
-app.get('/lti/health', (_req, res) => {
-  res.json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    env: process.env.NODE_ENV || 'development',
-    lti: {
-      client_id: CLIENT_ID, deployment_id: DEPLOYMENT_ID,
-      login_url: `${BASE_URL}/lti/login`,
-      launch_url: `${BASE_URL}/lti/launch`,
-      jwks_url: `${BASE_URL}/.well-known/jwks.json`
-    }
-  });
 });
 
 /* ========= ERRORES / START ========= */

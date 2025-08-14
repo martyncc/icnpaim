@@ -1,4 +1,4 @@
-// server/services/ltiService.js
+// server/services/ltiService.jss
 const crypto = require('crypto');
 const { createRemoteJWKSet, jwtVerify } = require('jose'); // v5
 

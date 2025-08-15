@@ -62,7 +62,7 @@ async function verifyIdToken(idToken, { clientId, issuer = PLATFORM_ISS, jwksUri
   return payload;
 }
 
-// Si tu herramienta no firma tokens para la plataforma, puedes dejar esto vacío
+// Si tu herramienta no firma tokens para la plataforma, puedes dejar esto vacío kie pero jie
 function getJWKS() {
   return { keys: [] };
 }

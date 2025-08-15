@@ -104,17 +104,86 @@ app.all(/^\/public(\/.*)?$/, (_req, res) => res.status(404).send('Not found'));
 
 /* ========= LTI ROUTES ========= */
 
-// GET a /lti/login y /lti/launch -> 405 (para NO caer en la SPA)
-app.get('/lti/login', (_req, res) => res.status(405).send('Use POST from the LMS (OIDC login-init).'));
-app.get('/lti/launch', (_req, res) => res.status(405).send('Use POST from the LMS with id_token.'));
+// GET a /lti/login y /lti/launch -> debugging info
+app.get('/lti/login', (req, res) => {
+  console.log('[DEBUG] GET request to /lti/login');
+  console.log('Headers:', req.headers);
+  console.log('Query params:', req.query);
+  console.log('User-Agent:', req.get('User-Agent'));
+  
+  res.status(405).type('html').send(`
+    <!DOCTYPE html>
+    <html>
+    <head><title>LTI Login Debug</title></head>
+    <body>
+      <h2>❌ Método incorrecto para LTI Login</h2>
+      <p><strong>Error:</strong> Se recibió GET, se esperaba POST</p>
+      <p><strong>URL solicitada:</strong> ${req.originalUrl}</p>
+      <p><strong>User-Agent:</strong> ${req.get('User-Agent')}</p>
+      <p><strong>Referer:</strong> ${req.get('Referer') || 'No referer'}</p>
+      
+      <h3>URLs correctas para Blackboard:</h3>
+      <ul>
+        <li><strong>Login URL:</strong> <code>${BASE_URL}/lti/login</code> (POST)</li>
+        <li><strong>Launch URL:</strong> <code>${BASE_URL}/lti/launch</code> (POST)</li>
+        <li><strong>JWKS URL:</strong> <code>${BASE_URL}/.well-known/jwks.json</code> (GET)</li>
+      </ul>
+      
+      <h3>Debugging Info:</h3>
+      <pre>${JSON.stringify({
+        method: req.method,
+        url: req.originalUrl,
+        headers: req.headers,
+        query: req.query
+      }, null, 2)}</pre>
+    </body>
+    </html>
+  `);
+});
+
+app.get('/lti/launch', (req, res) => {
+  console.log('[DEBUG] GET request to /lti/launch');
+  console.log('Headers:', req.headers);
+  console.log('Query params:', req.query);
+  
+  res.status(405).type('html').send(`
+    <!DOCTYPE html>
+    <html>
+    <head><title>LTI Launch Debug</title></head>
+    <body>
+      <h2>❌ Método incorrecto para LTI Launch</h2>
+      <p><strong>Error:</strong> Se recibió GET, se esperaba POST</p>
+      <p><strong>URL solicitada:</strong> ${req.originalUrl}</p>
+      
+      <h3>Debugging Info:</h3>
+      <pre>${JSON.stringify({
+        method: req.method,
+        url: req.originalUrl,
+        headers: req.headers,
+        query: req.query
+      }, null, 2)}</pre>
+    </body>
+    </html>
+  `);
+});
 
 // 1) OIDC Login Initiation (POST)
 app.post('/lti/login', async (req, res) => {
   try {
+    console.log('[LTI] POST /lti/login - Headers:', req.headers);
+    console.log('[LTI] POST /lti/login - Body:', req.body);
+    console.log('[LTI] POST /lti/login - Content-Type:', req.get('Content-Type'));
+    
     const { iss, login_hint, lti_message_hint } = req.body;
-    console.log('[LTI] /lti/login body:', { iss, has_login_hint: !!login_hint });
+    console.log('[LTI] /lti/login parsed:', { 
+      iss, 
+      has_login_hint: !!login_hint,
+      lti_message_hint: !!lti_message_hint,
+      client_id: CLIENT_ID 
+    });
 
     if (!iss || !login_hint) {
+      console.log('[LTI] Missing required parameters');
       return res.status(400).json({ error: 'Missing required LTI parameters', received: { iss, login_hint } });
     }
 
@@ -146,10 +215,20 @@ app.post('/lti/login', async (req, res) => {
 // 2) LTI Launch (POST con id_token)
 app.post('/lti/launch', async (req, res) => {
   try {
+    console.log('[LTI] POST /lti/launch - Headers:', req.headers);
+    console.log('[LTI] POST /lti/launch - Body keys:', Object.keys(req.body));
+    console.log('[LTI] POST /lti/launch - Content-Type:', req.get('Content-Type'));
+    
     const { id_token, state } = req.body;
     console.log('[LTI] /lti/launch received. id_token?', !!id_token, 'state:', state);
+    console.log('[LTI] Session state:', req.session.lti_state);
 
     if (!id_token || !state || state !== req.session.lti_state) {
+      console.log('[LTI] Invalid state or id_token', { 
+        has_id_token: !!id_token, 
+        received_state: state, 
+        session_state: req.session.lti_state 
+      });
       return res.status(400).send('Invalid state or id_token');
     }
 
@@ -220,11 +299,15 @@ app.get('/lti/health', (_req, res) => {
     status: 'OK',
     timestamp: new Date().toISOString(),
     env: process.env.NODE_ENV || 'development',
+    base_url: BASE_URL,
+    base_host: BASE_HOST,
     lti: {
       client_id: CLIENT_ID, deployment_id: DEPLOYMENT_ID,
       login_url: `${BASE_URL}/lti/login`,
       launch_url: `${BASE_URL}/lti/launch`,
-      jwks_url: `${BASE_URL}/.well-known/jwks.json`
+      jwks_url: `${BASE_URL}/.well-known/jwks.json`,
+      platform_iss: PLATFORM_ISS,
+      platform_jwks: PLATFORM_JWKS
     }
   });
 });
@@ -307,13 +390,30 @@ app.get('/', (_req, res) => {
   res.type('html').send(`
     <!DOCTYPE html><html><head><meta charset="utf-8"><title>ICN PAIM</title></head>
     <body>
-      <h3>Servidor OK</h3>
+      <h3>🚀 ICN PAIM - Servidor OK</h3>
+      <p><strong>Base URL:</strong> ${BASE_URL}</p>
+      <p><strong>Environment:</strong> ${process.env.NODE_ENV || 'development'}</p>
+      
+      <h4>📋 URLs para Blackboard:</h4>
       <ul>
         <li>Login URL: <code>${BASE_URL}/lti/login</code> (POST only)</li>
         <li>Launch URL: <code>${BASE_URL}/lti/launch</code> (POST only)</li>
-        <li>Health: <code>${BASE_URL}/lti/health</code> (200)</li>
+        <li>JWKS URL: <code>${BASE_URL}/.well-known/jwks.json</code> (GET)</li>
+        <li>Health: <a href="${BASE_URL}/lti/health">${BASE_URL}/lti/health</a></li>
       </ul>
-      <p>Build detectado: ${fs.existsSync(path.join(clientBuildDir, 'index.html'))}</p>
+      
+      <h4>🔑 Credenciales LTI:</h4>
+      <ul>
+        <li><strong>Client ID:</strong> ${CLIENT_ID}</li>
+        <li><strong>Deployment ID:</strong> ${DEPLOYMENT_ID}</li>
+      </ul>
+      
+      <h4>🔧 Debug:</h4>
+      <ul>
+        <li>Build detectado: ${fs.existsSync(path.join(clientBuildDir, 'index.html'))}</li>
+        <li>Platform ISS: ${PLATFORM_ISS || 'NOT SET'}</li>
+        <li>Platform JWKS: ${PLATFORM_JWKS || 'NOT SET'}</li>
+      </ul>
     </body></html>
   `);
 });

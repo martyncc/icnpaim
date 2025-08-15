@@ -19,6 +19,20 @@ function generateNonce() {
 }
 
 function buildAuthUrl({ login_hint, lti_message_hint, target_link_uri, state, nonce, client_id }) {
+  console.log('[LTI Service] Building auth URL with:', {
+    login_hint: !!login_hint,
+    lti_message_hint: !!lti_message_hint,
+    target_link_uri,
+    state,
+    nonce,
+    client_id,
+    oidc_auth: OIDC_AUTH
+  });
+  
+  if (!OIDC_AUTH) {
+    throw new Error('LTI_PLATFORM_OIDC_AUTH not configured');
+  }
+  
   const params = new URLSearchParams({
     response_type: 'id_token',
     response_mode: 'form_post',
@@ -34,7 +48,9 @@ function buildAuthUrl({ login_hint, lti_message_hint, target_link_uri, state, no
   // Blackboard suele exigirlo explícito:
   params.set('target_link_uri', target_link_uri);
 
-  return `${OIDC_AUTH}?${params.toString()}`;
+  const authUrl = `${OIDC_AUTH}?${params.toString()}`;
+  console.log('[LTI Service] Generated auth URL:', authUrl);
+  return authUrl;
 }
 
 // jose v5 es ESM → import dinámico para convivir con CommonJS

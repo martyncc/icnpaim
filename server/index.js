@@ -24,8 +24,26 @@ const isProd = process.env.NODE_ENV === 'production' || !!process.env.RAILWAY_EN
 const CLIENT_ID     = process.env.LTI_CLIENT_ID     || '48dd70cc-ab62-4fbd-ba91-d3d984644373';
 const DEPLOYMENT_ID = process.env.LTI_DEPLOYMENT_ID || '2b286722-4ef6-4dda-a756-eec5dca12441';
 const REDIRECT_URI  = process.env.LTI_REDIRECT_URI  || `${BASE_URL}/lti/launch`;
-const PLATFORM_ISS  = process.env.LTI_PLATFORM_ISS;   // issuer de Blackboard
-const PLATFORM_JWKS = process.env.LTI_PLATFORM_JWKS;  // JWKS endpoint de Blackboard
+const PLATFORM_ISS  = process.env.LTI_PLATFORM_ISS || 'https://udla-staging.blackboard.com';
+const PLATFORM_JWKS = process.env.LTI_PLATFORM_JWKS || 'https://udla-staging.blackboard.com/learn/api/public/v1/oidc/jwks';
+const PLATFORM_OIDC_AUTH = process.env.LTI_PLATFORM_OIDC_AUTH || 'https://udla-staging.blackboard.com/learn/api/public/v1/oidc/authorize';
+
+// Validar variables críticas
+console.log('🔧 Environment Variables Check:');
+console.log('- PORT:', PORT);
+console.log('- BASE_HOST:', BASE_HOST);
+console.log('- BASE_URL:', BASE_URL);
+console.log('- CLIENT_ID:', CLIENT_ID);
+console.log('- DEPLOYMENT_ID:', DEPLOYMENT_ID);
+console.log('- PLATFORM_ISS:', PLATFORM_ISS);
+console.log('- PLATFORM_JWKS:', PLATFORM_JWKS);
+console.log('- PLATFORM_OIDC_AUTH:', PLATFORM_OIDC_AUTH);
+console.log('- WORDPRESS_URL:', process.env.WORDPRESS_URL || 'NOT SET');
+
+if (!PLATFORM_ISS || !PLATFORM_JWKS || !PLATFORM_OIDC_AUTH) {
+  console.error('❌ CRITICAL: Missing LTI platform configuration!');
+  console.error('Required variables: LTI_PLATFORM_ISS, LTI_PLATFORM_JWKS, LTI_PLATFORM_OIDC_AUTH');
+}
 
 /* ========= PROXY / LOGS / CORS / CSP ========= */
 app.set('trust proxy', 1);
@@ -233,7 +251,31 @@ app.get('/lti/login', async (req, res) => {
     return res.redirect(authUrl);
   } catch (error) {
     console.error('❌ LTI GET Login Error:', error);
-    return res.status(500).json({ error: 'LTI GET Login failed', details: error.message });
+    return res.status(500).type('html').send(`
+      <!DOCTYPE html>
+      <html>
+      <head><title>LTI Error Debug</title></head>
+      <body style="font-family: Arial, sans-serif; padding: 20px;">
+        <h2>❌ LTI Login Error</h2>
+        <p><strong>Error:</strong> ${error.message}</p>
+        <p><strong>Timestamp:</strong> ${new Date().toISOString()}</p>
+        
+        <h3>Environment Check:</h3>
+        <ul>
+          <li>PLATFORM_ISS: ${PLATFORM_ISS}</li>
+          <li>PLATFORM_JWKS: ${PLATFORM_JWKS}</li>
+          <li>PLATFORM_OIDC_AUTH: ${PLATFORM_OIDC_AUTH}</li>
+          <li>CLIENT_ID: ${CLIENT_ID}</li>
+          <li>DEPLOYMENT_ID: ${DEPLOYMENT_ID}</li>
+        </ul>
+        
+        <h3>Request Details:</h3>
+        <pre>${JSON.stringify(req.query, null, 2)}</pre>
+        
+        <a href="/lti/health">🔧 Check Health Status</a>
+      </body>
+      </html>
+    `);
   }
 });
 
@@ -326,13 +368,24 @@ app.get('/lti/health', (_req, res) => {
     env: process.env.NODE_ENV || 'development',
     base_url: BASE_URL,
     base_host: BASE_HOST,
+    railway_env: process.env.RAILWAY_ENVIRONMENT || 'not set',
     lti: {
       client_id: CLIENT_ID, deployment_id: DEPLOYMENT_ID,
       login_url: `${BASE_URL}/lti/login`,
       launch_url: `${BASE_URL}/lti/launch`,
       jwks_url: `${BASE_URL}/.well-known/jwks.json`,
       platform_iss: PLATFORM_ISS,
-      platform_jwks: PLATFORM_JWKS
+      platform_jwks: PLATFORM_JWKS,
+      platform_oidc_auth: PLATFORM_OIDC_AUTH
+    },
+    environment_variables: {
+      LTI_CLIENT_ID: !!process.env.LTI_CLIENT_ID,
+      LTI_DEPLOYMENT_ID: !!process.env.LTI_DEPLOYMENT_ID,
+      LTI_PLATFORM_ISS: !!process.env.LTI_PLATFORM_ISS,
+      LTI_PLATFORM_JWKS: !!process.env.LTI_PLATFORM_JWKS,
+      LTI_PLATFORM_OIDC_AUTH: !!process.env.LTI_PLATFORM_OIDC_AUTH,
+      WORDPRESS_URL: !!process.env.WORDPRESS_URL,
+      SESSION_SECRET: !!process.env.SESSION_SECRET
     }
   });
 });

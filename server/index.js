@@ -39,7 +39,6 @@ const allowedOrigins = new Set([
   `https://${BASE_HOST}`,
   'https://icnpaim.cl',
   'https://udla-staging.blackboard.com',
-  'https://blackboard.com',
   'http://localhost:3000'
 ]);
 app.use(cors({

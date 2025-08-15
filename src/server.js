@@ -16,7 +16,6 @@ const app = express();
 app.use(cors({
   origin: [
     'https://udla-staging.blackboard.com',
-    'https://blackboard.com',
     'https://icnpaim.cl',
     'http://localhost:3000'
   ],

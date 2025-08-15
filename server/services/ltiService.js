@@ -1,14 +1,15 @@
 // server/services/ltiService.js
 const crypto = require('crypto');
 
-// Endpoints de la plataforma (Blackboard) por ENV
-const PLATFORM_ISS  = process.env.LTI_PLATFORM_ISS;          // ej: https://<bb>/learn
-const PLATFORM_JWKS = process.env.LTI_PLATFORM_JWKS;         // ej: https://<bb>/learn/api/public/v1/oidc/jwks
-const OIDC_AUTH     = process.env.LTI_PLATFORM_OIDC_AUTH;    // ej: https://<bb>/learn/api/public/v1/oidc/authorize
+// Endpoints de la plataforma (Blackboard) con valores por defecto
+const PLATFORM_ISS  = process.env.LTI_PLATFORM_ISS || 'https://blackboard.com';
+const PLATFORM_JWKS = process.env.LTI_PLATFORM_JWKS || 'https://udla-staging.blackboard.com/learn/api/public/v1/oidc/jwks';
+const OIDC_AUTH     = process.env.LTI_PLATFORM_OIDC_AUTH || 'https://udla-staging.blackboard.com/learn/api/public/v1/oidc/authorize';
 
-if (!PLATFORM_ISS || !PLATFORM_JWKS || !OIDC_AUTH) {
-  console.warn('[LTI] Falta LTI_PLATFORM_ISS / LTI_PLATFORM_JWKS / LTI_PLATFORM_OIDC_AUTH en variables de entorno.');
-}
+console.log('[LTI Service] Configuration loaded:');
+console.log('- PLATFORM_ISS:', PLATFORM_ISS);
+console.log('- PLATFORM_JWKS:', PLATFORM_JWKS);
+console.log('- OIDC_AUTH:', OIDC_AUTH);
 
 function generateState() {
   return crypto.randomBytes(16).toString('hex');

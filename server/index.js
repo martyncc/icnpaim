@@ -21,7 +21,7 @@ const BASE_HOST = process.env.BASE_HOST || 'lti.icnpaim.cl';
 const BASE_URL = `https://${BASE_HOST}`;
 const isProd = process.env.NODE_ENV === 'production' || !!process.env.RAILWAY_ENVIRONMENT;
 
-const CLIENT_ID     = process.env.LTI_CLIENT_ID     || '89ef5212-b589-4f9c-b5b8-2fa6ad3e2006';
+const CLIENT_ID     = process.env.LTI_CLIENT_ID     || '48dd70cc-ab62-4fbd-ba91-d3d984644373';
 const DEPLOYMENT_ID = process.env.LTI_DEPLOYMENT_ID || '2b286722-4ef6-4dda-a756-eec5dca12441';
 const REDIRECT_URI  = process.env.LTI_REDIRECT_URI  || `${BASE_URL}/lti/launch`;
 const PLATFORM_ISS  = process.env.LTI_PLATFORM_ISS;   // issuer de Blackboard
@@ -104,42 +104,6 @@ app.all(/^\/public(\/.*)?$/, (_req, res) => res.status(404).send('Not found'));
 
 /* ========= LTI ROUTES ========= */
 
-// GET a /lti/login y /lti/launch -> debugging info
-app.get('/lti/login', (req, res) => {
-  console.log('[DEBUG] GET request to /lti/login');
-  console.log('Headers:', req.headers);
-  console.log('Query params:', req.query);
-  console.log('User-Agent:', req.get('User-Agent'));
-  
-  res.status(405).type('html').send(`
-    <!DOCTYPE html>
-    <html>
-    <head><title>LTI Login Debug</title></head>
-    <body>
-      <h2>❌ Método incorrecto para LTI Login</h2>
-      <p><strong>Error:</strong> Se recibió GET, se esperaba POST</p>
-      <p><strong>URL solicitada:</strong> ${req.originalUrl}</p>
-      <p><strong>User-Agent:</strong> ${req.get('User-Agent')}</p>
-      <p><strong>Referer:</strong> ${req.get('Referer') || 'No referer'}</p>
-      
-      <h3>URLs correctas para Blackboard:</h3>
-      <ul>
-        <li><strong>Login URL:</strong> <code>${BASE_URL}/lti/login</code> (POST)</li>
-        <li><strong>Launch URL:</strong> <code>${BASE_URL}/lti/launch</code> (POST)</li>
-        <li><strong>JWKS URL:</strong> <code>${BASE_URL}/.well-known/jwks.json</code> (GET)</li>
-      </ul>
-      
-      <h3>Debugging Info:</h3>
-      <pre>${JSON.stringify({
-        method: req.method,
-        url: req.originalUrl,
-        headers: req.headers,
-        query: req.query
-      }, null, 2)}</pre>
-    </body>
-    </html>
-  `);
-});
 
 app.get('/lti/launch', (req, res) => {
   console.log('[DEBUG] GET request to /lti/launch');
@@ -209,6 +173,67 @@ app.post('/lti/login', async (req, res) => {
   } catch (error) {
     console.error('❌ LTI Login Error:', error);
     return res.status(500).json({ error: 'LTI Login failed' });
+  }
+});
+
+// BLACKBOARD TAMBIÉN PUEDE HACER GET (con query params)
+app.get('/lti/login', async (req, res) => {
+  try {
+    console.log('[LTI] GET /lti/login - Headers:', req.headers);
+    console.log('[LTI] GET /lti/login - Query:', req.query);
+    
+    const { iss, login_hint, lti_message_hint, client_id, lti_deployment_id } = req.query;
+    console.log('[LTI] GET /lti/login parsed:', { 
+      iss, 
+      has_login_hint: !!login_hint,
+      lti_message_hint: !!lti_message_hint,
+      client_id,
+      lti_deployment_id,
+      expected_client_id: CLIENT_ID,
+      expected_deployment_id: DEPLOYMENT_ID
+    });
+
+    if (!iss || !login_hint) {
+      console.log('[LTI] Missing required parameters in GET request');
+      return res.status(400).json({ 
+        error: 'Missing required LTI parameters', 
+        received: { iss, login_hint, client_id, lti_deployment_id } 
+      });
+    }
+
+    // Verificar client_id (Blackboard está enviando uno diferente)
+    if (client_id && client_id !== CLIENT_ID) {
+      console.log(`[LTI] ⚠️ Client ID mismatch: received ${client_id}, expected ${CLIENT_ID}`);
+      // Por ahora solo logueamos, no bloqueamos
+    }
+
+    // Verificar deployment_id
+    if (lti_deployment_id && lti_deployment_id !== DEPLOYMENT_ID) {
+      console.log(`[LTI] ⚠️ Deployment ID mismatch: received ${lti_deployment_id}, expected ${DEPLOYMENT_ID}`);
+    }
+
+    const state = ltiService.generateState();
+    const nonce = ltiService.generateNonce();
+
+    req.session.lti_state = state;
+    req.session.lti_nonce = nonce;
+    req.session.login_hint = login_hint;
+
+    const authUrl = ltiService.buildAuthUrl({
+      iss,
+      login_hint,
+      lti_message_hint,
+      target_link_uri: REDIRECT_URI,
+      state,
+      nonce,
+      client_id: client_id || CLIENT_ID // Usar el que envía Blackboard si existe
+    });
+
+    console.log('[LTI] GET: Redirecting to OIDC Auth:', authUrl);
+    return res.redirect(authUrl);
+  } catch (error) {
+    console.error('❌ LTI GET Login Error:', error);
+    return res.status(500).json({ error: 'LTI GET Login failed', details: error.message });
   }
 });
 

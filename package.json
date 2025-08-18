@@ -13,18 +13,20 @@
     "railway:start": "node server/index.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "body-parser": "^1.20.2",
-    "express-session": "^1.17.3",
     "axios": "^1.6.0",
-    "jsonwebtoken": "^9.0.2",
-    "node-jose": "^2.2.0",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-        "jose": "^5.7.0"
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "helmet": "^8.1.0",
+    "jose": "^5.7.0",
+    "jsonwebtoken": "^9.0.2",
+    "ltijs": "^5.9.7",
+    "node-jose": "^2.2.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1",
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.0.1"
   }
 }

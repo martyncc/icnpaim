@@ -272,7 +272,6 @@ app.get('/health', (_req, res) => {
     }
   });
 });
-});
 app.get('/.well-known/health', (_req, res) => res.redirect(301, '/health'));
 
 // Debug endpoints (protegidos por DEBUG_TOKEN)

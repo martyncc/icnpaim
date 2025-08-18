@@ -157,16 +157,12 @@ app.all(/^\/client(\/.*)?$/, (_req, res) => res.status(404).send('Not found'));
 app.all(/^\/public(\/.*)?$/, (_req, res) => res.status(404).send('Not found'));
 
 /* ========= LTIJS: Provider ========= */
-const lti = new Provider(
-  LTI_ENCRYPTION_KEY,
-  { url: MONGO_URL },
-  {
-    appUrl: '/',                    // tu SPA vive en raíz
-    loginUrl: '/lti/login',         // OIDC Login de la herramienta
-    keysetUrl: '/.well-known/jwks.json',
-    cookies: { secure: true, sameSite: 'None' }
-  }
-);
+Provider.setup(LTI_ENCRYPTION_KEY, { url: MONGO_URL }, {
+  appUrl: '/', loginUrl: '/lti/login', keysetUrl: '/.well-known/jwks.json',
+  cookies: { secure: true, sameSite: 'None' }
+});
+const lti = Provider;
+
 
 // Estado LTI para healthchecks
 global.ltiReady = false;

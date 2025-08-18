@@ -7,7 +7,7 @@ const session = require('express-session');
 const path = require('path');
 const fs = require('fs');
 const helmet = require('helmet');
-const { Provider } = require('ltijs');
+const lti = require('ltijs').Provider;
 
 // ===== Mini logger con buffer en memoria (para debug sin CloudWatch) =====
 const LOG_BUFFER_MAX = 200;
@@ -157,12 +157,16 @@ app.all(/^\/client(\/.*)?$/, (_req, res) => res.status(404).send('Not found'));
 app.all(/^\/public(\/.*)?$/, (_req, res) => res.status(404).send('Not found'));
 
 /* ========= LTIJS: Provider ========= */
-Provider.setup(LTI_ENCRYPTION_KEY, { url: MONGO_URL }, {
-  appUrl: '/', loginUrl: '/lti/login', keysetUrl: '/.well-known/jwks.json',
-  cookies: { secure: true, sameSite: 'None' }
-});
-const lti = Provider;
-
+lti.setup(
+  LTI_ENCRYPTION_KEY,
+  { url: MONGO_URL },
+  {
+    appUrl: '/',                    // tu SPA vive en raíz
+    loginUrl: '/lti/login',         // OIDC Login de la herramienta
+    keysetUrl: '/.well-known/jwks.json',
+    cookies: { secure: true, sameSite: 'None' }
+  }
+);
 
 // Estado LTI para healthchecks
 global.ltiReady = false;
@@ -230,10 +234,10 @@ global.ltiError = null;
 })();
 
 /* ========= HEALTH / DEBUG ========= */
-app.get('/lti/live', (_req, res) => res.status(200).send('live'));
-app.get('/lti/ready', (_req, res) => global.ltiReady ? res.status(200).send('ready') : res.status(503).send('not-ready'));
+app.get('/live', (_req, res) => res.status(200).send('live'));
+app.get('/ready', (_req, res) => global.ltiReady ? res.status(200).send('ready') : res.status(503).send('not-ready'));
 
-app.get('/lti/health', (_req, res) => {
+app.get('/health', (_req, res) => {
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
@@ -268,7 +272,8 @@ app.get('/lti/health', (_req, res) => {
     }
   });
 });
-app.get('/.well-known/health', (_req, res) => res.redirect(301, '/lti/health'));
+});
+app.get('/.well-known/health', (_req, res) => res.redirect(301, '/health'));
 
 // Debug endpoints (protegidos por DEBUG_TOKEN)
 app.all('/debug/echo', requireDebug, (req, res) => {
@@ -383,8 +388,8 @@ app.get('/', (_req, res) => {
         <li>Login URL: <code>${BASE_URL}/lti/login</code></li>
         <li>Launch URL: <code>${BASE_URL}/lti/launch</code></li>
         <li>JWKS URL: <code>${BASE_URL}/.well-known/jwks.json</code></li>
-        <li>Health: <a href="${BASE_URL}/lti/health">${BASE_URL}/lti/health</a></li>
-        <li>Ready: <a href="${BASE_URL}/lti/ready">${BASE_URL}/lti/ready</a> | Live: <a href="${BASE_URL}/lti/live">${BASE_URL}/lti/live</a></li>
+        <li>Health: <a href="${BASE_URL}/health">${BASE_URL}/health</a></li>
+        <li>Ready: <a href="${BASE_URL}/ready">${BASE_URL}/ready</a> | Live: <a href="${BASE_URL}/live">${BASE_URL}/live</a></li>
       </ul>
       <h4>🔑 Credenciales LTI:</h4>
       <ul>

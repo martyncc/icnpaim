@@ -338,7 +338,7 @@ app.get('/', (_req, res) => {
   `);
 });
 
-/* ========= ERRORES / START ========= */
+/* ========= ERRORES / START ========= falto algo jijis*/
 app.use((error, _req, res, _next) => {
   console.error('Server Error:', error);
   res.status(500).json({ error: 'Internal server error' });

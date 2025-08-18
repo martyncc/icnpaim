@@ -234,6 +234,11 @@ global.ltiError = null;
 })();
 
 /* ========= HEALTH / DEBUG ========= */
+// Endpoints compatibles con checkers tontos (y con humanos cansados)
+app.get('/lti/health', (_req, res) => res.status(200).json({ status: 'OK', moved: '/health', reason: 'health under /lti is guarded by ltijs; use /health' }));
+app.get('/lti/live', (_req, res) => res.status(200).send('live'));
+app.get('/lti/ready', (_req, res) => global.ltiReady ? res.status(200).send('ready') : res.status(503).send('not-ready'));
+
 app.get('/live', (_req, res) => res.status(200).send('live'));
 app.get('/ready', (_req, res) => global.ltiReady ? res.status(200).send('ready') : res.status(503).send('not-ready'));
 

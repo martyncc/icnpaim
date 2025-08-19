@@ -168,6 +168,34 @@ lti.setup(
   }
 );
 
+// ===== RUTAS PUBLICAS PRE-LTI (para que no choquen con el guard de ltijs) =====
+app.get('/lti/health', (_req, res) => res.status(200).json({ status: 'OK', moved: '/health', reason: 'health under /lti is guarded by ltijs; use /health' }));
+app.get('/lti/live', (_req, res) => res.status(200).send('live'));
+app.get('/lti/ready', (_req, res) => global.ltiReady ? res.status(200).send('ready') : res.status(503).send('not-ready'));
+
+// ===== Logger de entrada para TODO lo que llegue a /lti (para debug del flujo) =====
+let lastLtiReq = null;
+app.use('/lti', (req, _res, next) => {
+  const snapshot = {
+    method: req.method,
+    url: req.originalUrl,
+    headers: {
+      'content-type': req.get('content-type'),
+      'user-agent': req.get('user-agent'),
+      origin: req.get('origin'),
+      referer: req.get('referer')
+    },
+    query: req.query
+  };
+  if (req.method === 'POST') {
+    snapshot.bodyKeys = Object.keys(req.body || {});
+  }
+  lastLtiReq = snapshot;
+  logEvent('LTI-IN', 'incoming /lti request', snapshot);
+  next();
+});
+});
+
 // Estado LTI para healthchecks
 global.ltiReady = false;
 global.ltiError = null;
@@ -315,58 +343,10 @@ app.get('/debug/env', requireDebug, (_req, res) => {
   });
 });
 
-/* ========= API PROTEGIDA ========= */
-app.get('/api/user', requireAuth, (req, res) => {
-  res.json({
-    user: req.session.user,
-    wpUser: req.session.wpUser,
-    course: req.session.course
-  });
+// Última solicitud /lti capturada (para entender si Blackboard manda GET o POST, etc.)
+app.get('/debug/last-lti', requireDebug, (_req, res) => {
+  res.json(lastLtiReq || { note: 'No LTI request captured yet' });
 });
-
-app.get('/api/student/pathway', requireAuth, async (req, res) => {
-  try {
-    const userId = req.session.wpUser?.id;
-    const courseId = req.session.course?.id;
-    const pathway = await courseService.getStudentPathway(userId, courseId);
-    res.json(pathway);
-  } catch (error) {
-    logEvent('ERROR', 'getStudentPathway failed', { error: error?.message });
-    res.status(500).json({ error: 'Failed to fetch pathway' });
-  }
-});
-
-app.get('/api/student/units', requireAuth, async (req, res) => {
-  try {
-    const userId = req.session.wpUser?.id;
-    const courseId = req.session.course?.id;
-    const units = await courseService.getActiveUnits(userId, courseId);
-    res.json(units);
-  } catch (error) {
-    logEvent('ERROR', 'getActiveUnits failed', { error: error?.message });
-    res.status(500).json({ error: 'Failed to fetch units' });
-  }
-});
-
-app.post('/api/progress/update', requireAuth, async (req, res) => {
-  try {
-    const { unitId, contentId, completed, score } = req.body;
-    const userId = req.session.wpUser?.id;
-    const progress = await courseService.updateProgress(userId, unitId, contentId, completed, score);
-    res.json(progress);
-  } catch (error) {
-    logEvent('ERROR', 'updateProgress failed', { error: error?.message });
-    res.status(500).json({ error: 'Failed to update progress' });
-  }
-});
-
-/* ========= SPA EN RAÍZ ========= */
-const clientBuildDir = path.join(__dirname, '../client/build');
-logEvent('BOOT', 'build exists?', { exists: fs.existsSync(path.join(clientBuildDir, 'index.html')) });
-
-// 1) estáticos (JS/CSS/img)
-if (isProd) {
-  app.use(express.static(clientBuildDir, { index: false }));
 }
 
 // 2) HTML de la SPA (rutas protegidas)

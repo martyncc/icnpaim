@@ -194,7 +194,6 @@ app.use('/lti', (req, _res, next) => {
   logEvent('LTI-IN', 'incoming /lti request', snapshot);
   next();
 });
-});
 
 // Estado LTI para healthchecks
 global.ltiReady = false;
@@ -347,6 +346,12 @@ app.get('/debug/env', requireDebug, (_req, res) => {
 app.get('/debug/last-lti', requireDebug, (_req, res) => {
   res.json(lastLtiReq || { note: 'No LTI request captured yet' });
 });
+
+/* ========= SPA EN RAÍZ ========= */
+const clientBuildDir = path.join(__dirname, '../client/build');
+logEvent('BOOT', 'build exists?', { exists: fs.existsSync(path.join(clientBuildDir, 'index.html')) });
+if (isProd) {
+  app.use(express.static(clientBuildDir, { index: false }));
 }
 
 // 2) HTML de la SPA (rutas protegidas)

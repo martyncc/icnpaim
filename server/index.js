@@ -173,6 +173,27 @@ app.get('/lti/health', (_req, res) => res.status(200).json({ status: 'OK', moved
 app.get('/lti/live', (_req, res) => res.status(200).send('live'));
 app.get('/lti/ready', (_req, res) => global.ltiReady ? res.status(200).send('ready') : res.status(503).send('not-ready'));
 
+// ===== Puente para plataformas que POSTean id_token a /lti/login por error (redirige a /lti/launch) =====
+app.post('/lti/login', (req, res, next) => {
+  try {
+    const idt = req.body?.id_token;
+    const state = req.body?.state || '';
+    if (!idt) return next(); // deja que ltijs maneje el login normal
+    logEvent('LTI-BRIDGE', 'POST id_token recibido en /lti/login; reenviando a /lti/launch', { hasIdToken: true, hasState: !!state });
+    const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return res.status(200).type('html').send(`<!doctype html><html><body>
+      <form id="f" method="post" action="/lti/launch">
+        <input type="hidden" name="id_token" value="${esc(idt)}" />
+        <input type="hidden" name="state" value="${esc(state)}" />
+      </form>
+      <script>document.getElementById('f').submit();</script>
+    </body></html>`);
+  } catch (e) {
+    logEvent('ERROR', 'bridge /lti/login -> /lti/launch failed', { error: e?.message });
+    return res.status(400).send('Bridge failed');
+  }
+});
+
 // ===== Logger de entrada para TODO lo que llegue a /lti (para debug del flujo) =====
 let lastLtiReq = null;
 app.use('/lti', (req, _res, next) => {
@@ -205,14 +226,25 @@ global.ltiError = null;
     await lti.deploy({ serverless: true });
     app.use('/lti', lti.app); // monta rutas internas de ltijs (login/launch/jwks)
 
+    // helper para registrar plataforma, tolerante a duplicados
+const registerPlatform = async (url, name) => {
+  try {
     await lti.registerPlatform({
-      url: LTI_PLATFORM_ISS,                // issuer/plataforma
-      name: 'UDLA Staging',
+      url,
+      name,
       clientId: LTI_CLIENT_ID,
-      authenticationEndpoint: LTI_PLATFORM_OIDC_AUTH, // OIDC auth request endpoint
-      authTokenEndpoint: LTI_PLATFORM_TOKEN_URL,      // Token endpoint (para servicios LTI)
-      keysetUrl: LTI_PLATFORM_JWKS                    // Public keyset URL de Blackboard
+      authenticationEndpoint: LTI_PLATFORM_OIDC_AUTH,
+      authTokenEndpoint: LTI_PLATFORM_TOKEN_URL,
+      keysetUrl: LTI_PLATFORM_JWKS
     });
+    logEvent('LTI', 'Platform registered', { url });
+  } catch (e) {
+    logEvent('WARN', 'registerPlatform failed or already exists', { url, error: e?.message });
+  }
+};
+
+await registerPlatform(LTI_PLATFORM_ISS, 'UDLA Staging');
+await registerPlatform('https://blackboard.com', 'Blackboard Global Issuer');
 
     // Qué hacer cuando el launch fue validado
     lti.onConnect(async (token, req, res) => {

@@ -1,31 +1,68 @@
+// server/index.js — LTI 1.3 "limpio" sobre Express (sin ltijs)
 require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const session = require('express-session');
 const path = require('path');
+const fs = require('fs');
 
-// Servicios
+// Servicios propios
 const ltiService = require('./services/ltiService');
 const wordpressService = require('./services/wordpressService');
 const courseService = require('./services/courseService');
 
 const app = express();
 
-// Middleware
+/* ========= ENTORNO ========= */
+const PORT = process.env.PORT || 3333;
+const BASE_HOST = process.env.BASE_HOST || 'lti.icnpaim.cl';
+const BASE_URL = process.env.BASE_URL || `https://${BASE_HOST}`;
+const isProd = process.env.NODE_ENV === 'production' || !!process.env.RAILWAY_ENVIRONMENT;
+
+const LTI_CLIENT_ID        = process.env.LTI_CLIENT_ID || '48dd70cc-ab62-4fbd-ba91-d3d984644373';
+const LTI_DEPLOYMENT_ID    = process.env.LTI_DEPLOYMENT_ID || '2b286722-4ef6-4dda-a756-eec5dca12441';
+const LTI_PLATFORM_ISS     = process.env.LTI_PLATFORM_ISS || 'https://udla-staging.blackboard.com';
+const LTI_PLATFORM_JWKS    = process.env.LTI_PLATFORM_JWKS || 'https://udla-staging.blackboard.com/learn/api/lti/1.3/jwks';
+const LTI_PLATFORM_OIDC    = process.env.LTI_PLATFORM_OIDC_AUTH || 'https://udla-staging.blackboard.com/learn/api/lti/1.3/authorize';
+const LTI_PLATFORM_TOKEN   = process.env.LTI_PLATFORM_TOKEN_URL || 'https://udla-staging.blackboard.com/learn/api/lti/1.3/token';
+
+const REDIRECT_URI = `${BASE_URL}/lti/launch`;
+
+console.log('[ENV]', JSON.stringify({
+  PORT, BASE_HOST, BASE_URL, isProd,
+  LTI_CLIENT_ID, LTI_DEPLOYMENT_ID,
+  LTI_PLATFORM_ISS, LTI_PLATFORM_JWKS, LTI_PLATFORM_OIDC, LTI_PLATFORM_TOKEN
+}, null, 2));
+
+/* ========= MIDDLEWARE ========= */
+app.set('trust proxy', 1);
+
 app.use(cors({
-  origin: [
-    'https://udla-staging.blackboard.com',
-    'https://icnpaim.cl',
-    'http://localhost:3000'
-  ],
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);
+    const allow = new Set([
+      `https://${BASE_HOST}`,
+      'https://lti.icnpaim.cl',
+      'https://icnpaim.cl',
+      'https://udla-staging.blackboard.com',
+      'https://blackboard.com',
+      'http://localhost:3000'
+    ]);
+    try {
+      const hostname = new URL(origin).hostname;
+      if (allow.has(origin) || /\.blackboard\.com$/.test(hostname)) return cb(null, true);
+    } catch (_) {}
+    return cb(null, false);
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization','X-Requested-With']
 }));
 
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json({ limit: '1mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '1mb' }));
 
 app.use(session({
   secret: process.env.SESSION_SECRET || 'icnpaim-session-secret-2024',
@@ -33,156 +70,216 @@ app.use(session({
   saveUninitialized: false,
   name: 'icnpaim.sid',
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: isProd,
     httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000,
-    sameSite: process.env.NODE_ENV === 'production' ? 'None' : 'Lax'
+    sameSite: isProd ? 'none' : 'lax',
+    maxAge: 24 * 60 * 60 * 1000
   }
 }));
 
-// Servir archivos estáticos del build de React
-if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
-  app.use(express.static(path.join(__dirname, '../client/build')));
+/* ========= STATIC (SPA) ========= */
+const CLIENT_BUILD = path.join(__dirname, '../client/build');
+const hasBuild = fs.existsSync(path.join(CLIENT_BUILD, 'index.html'));
+if (isProd && hasBuild) {
+  app.use(express.static(CLIENT_BUILD, { index: false }));
 }
 
-// ===================
-// RUTAS LTI
-// ===================
+/* ========= UTILS / NORMALIZADORES ========= */
+// evita 404 por barra final
+app.all(['/lti/login/', '/lti/launch/'], (req, res) => {
+  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  const target = req.path.slice(0, -1) + qs;
+  const code = req.method === 'POST' ? 307 : 302;
+  return res.redirect(code, target);
+});
 
-// Endpoint de login LTI - DEBE coincidir con Blackboard config
-app.post('/lti/login', async (req, res) => {
+// corrige el clásico typo fantasma: /lti/logi → /lti/login
+app.all('/lti/logi', (req, res) => {
+  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  return res.redirect(302, '/lti/login' + qs);
+});
+
+// favicon para que no rompa logs con 401
+app.get('/favicon.ico', (_req, res) => res.status(204).end());
+
+/* ========= HEALTH PUBLICO ========= */
+app.get('/lti/health', (_req, res) => {
+  res.json({
+    status: 'OK',
+    ts: new Date().toISOString(),
+    env: process.env.NODE_ENV || 'development',
+    base_url: BASE_URL,
+    lti: {
+      client_id: LTI_CLIENT_ID,
+      deployment_id: LTI_DEPLOYMENT_ID,
+      login_url: `${BASE_URL}/lti/login`,
+      launch_url: `${BASE_URL}/lti/launch`,
+      jwks_url: `${BASE_URL}/.well-known/jwks.json`,
+      iss: LTI_PLATFORM_ISS
+    }
+  });
+});
+
+/* ========= LTI ROUTES ========= */
+// GET login initiation (muchos LMS la usan)
+app.get('/lti/login', async (req, res) => {
   try {
-    console.log('🔐 LTI Login Request received');
-    console.log('Headers:', req.headers);
-    console.log('Body:', req.body);
-    
-    // Validar que viene de Blackboard
-    const { iss, login_hint, target_link_uri } = req.body;
-    
-    console.log('🔍 Validating parameters:');
-    console.log('- iss:', iss);
-    console.log('- client_id:', client_id);
-    console.log('- deployment_id:', lti_deployment_id);
-    console.log('- login_hint:', login_hint);
-    
-    if (!iss || !login_hint || !client_id) {
-      console.log('❌ Missing required parameters');
-      return res.status(400).json({ 
-        error: 'Missing required LTI parameters',
-        received: { iss, login_hint, client_id, lti_deployment_id }
-      });
+    console.log('[LTI][GET /lti/login] query:', req.query);
+    const { iss, login_hint, lti_message_hint, client_id, lti_deployment_id, target_link_uri } = req.query;
+
+    // valida mínimos
+    if (!iss || !login_hint || !(client_id || LTI_CLIENT_ID)) {
+      return res.status(400).json({ error: 'Missing required LTI parameters', received: { iss, login_hint, client_id } });
     }
 
-    // Validar client_id
-    if (client_id !== '48dd70cc-ab62-4fbd-ba91-d3d984644373') {
-      console.log('❌ Invalid client_id:', client_id);
-      return res.status(400).json({ error: 'Invalid client_id' });
-    }
-
-    // Generar state y nonce para seguridad
+    // genera state/nonce
     const state = ltiService.generateState();
     const nonce = ltiService.generateNonce();
-    
-    // Guardar en sesión
     req.session.lti_state = state;
     req.session.lti_nonce = nonce;
     req.session.login_hint = login_hint;
 
-    // Construir URL de autorización
+    // construye URL de autorización
     const authUrl = ltiService.buildAuthUrl({
       iss,
       login_hint,
-      target_link_uri: 'https://icnpaim.cl/lti/launch',
+      lti_message_hint,
+      target_link_uri: REDIRECT_URI,
       state,
       nonce,
-      client_id
+      client_id: client_id || LTI_CLIENT_ID
     });
 
-    console.log('🔗 Redirecting to:', authUrl);
-    res.redirect(authUrl);
-
-  } catch (error) {
-    console.error('❌ LTI Login Error:', error);
-    res.status(500).json({ error: 'LTI Login failed' });
+    console.log('[LTI] → redirect auth:', authUrl);
+    return res.redirect(authUrl);
+  } catch (e) {
+    console.error('❌ GET /lti/login error:', e);
+    return res.status(500).json({ error: 'LTI Login failed' });
   }
 });
 
-// Endpoint de launch LTI - DEBE coincidir con Blackboard config
+// POST login initiation (algunos LMS lo hacen POST)
+app.post('/lti/login', async (req, res, next) => {
+  try {
+    console.log('[LTI][POST /lti/login] body keys:', Object.keys(req.body || {}));
+
+    // bridge: si te POSTean id_token aquí, reenvía a /lti/launch
+    if (req.body && req.body.id_token) {
+      const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                                .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      return res.status(200).type('html').send(`<!doctype html><html><body>
+        <form id="f" method="post" action="/lti/launch">
+          <input type="hidden" name="id_token" value="${esc(req.body.id_token)}"/>
+          <input type="hidden" name="state" value="${esc(req.body.state || '')}"/>
+        </form>
+        <script>document.getElementById('f').submit();</script>
+      </body></html>`);
+    }
+
+    const { iss, login_hint, lti_message_hint, client_id, lti_deployment_id } = req.body || {};
+    if (!iss || !login_hint || !(client_id || LTI_CLIENT_ID)) {
+      return res.status(400).json({ error: 'Missing required LTI parameters', received: { iss, login_hint, client_id } });
+    }
+
+    const state = ltiService.generateState();
+    const nonce = ltiService.generateNonce();
+    req.session.lti_state = state;
+    req.session.lti_nonce = nonce;
+    req.session.login_hint = login_hint;
+
+    const authUrl = ltiService.buildAuthUrl({
+      iss,
+      login_hint,
+      lti_message_hint,
+      target_link_uri: REDIRECT_URI,
+      state,
+      nonce,
+      client_id: client_id || LTI_CLIENT_ID
+    });
+
+    console.log('[LTI] → redirect auth:', authUrl);
+    return res.redirect(authUrl);
+  } catch (e) {
+    console.error('❌ POST /lti/login error:', e);
+    return res.status(500).json({ error: 'LTI Login failed' });
+  }
+});
+
+// LTI Launch: recibe id_token (form_post)
 app.post('/lti/launch', async (req, res) => {
   try {
-    console.log('🚀 LTI Launch Request:', req.body);
-    
-    const { id_token, state } = req.body;
-    
-    // Validar state
-    if (state !== req.session.lti_state) {
-      return res.status(400).json({ error: 'Invalid state parameter' });
+    console.log('[LTI][POST /lti/launch] body keys:', Object.keys(req.body || {}));
+    const { id_token, state } = req.body || {};
+
+    if (!id_token) return res.status(400).send('Missing id_token');
+    if (!state || state !== req.session.lti_state) return res.status(400).send('Invalid state');
+    if (!req.session.lti_nonce) return res.status(400).send('Missing nonce in session');
+
+    // verifica token con tu servicio (soporta 2 variantes)
+    const tokenData = ltiService.validateToken
+      ? await ltiService.validateToken(id_token)
+      : await ltiService.verifyIdToken(id_token, {
+          clientId: LTI_CLIENT_ID,
+          issuer: LTI_PLATFORM_ISS,
+          jwksUri: LTI_PLATFORM_JWKS
+        });
+
+    // comprobaciones básicas LTI
+    const msgType = tokenData['https://purl.imsglobal.org/spec/lti/claim/message_type'];
+    const deploymentId = tokenData['https://purl.imsglobal.org/spec/lti/claim/deployment_id'];
+    if (msgType !== 'LtiResourceLinkRequest') return res.status(400).send('Invalid message_type');
+    if (deploymentId && LTI_DEPLOYMENT_ID && deploymentId !== LTI_DEPLOYMENT_ID) {
+      console.warn('[LTI] deployment mismatch', { received: deploymentId, expected: LTI_DEPLOYMENT_ID });
     }
 
-    // Decodificar y validar el JWT
-    const tokenData = await ltiService.validateToken(id_token);
-    console.log('✅ Token validated:', tokenData);
+    // datos de usuario/contexto
+    const roles = tokenData['https://purl.imsglobal.org/spec/lti/claim/roles'] || [];
+    const context = tokenData['https://purl.imsglobal.org/spec/lti/claim/context'] || null;
+    const resourceLink = tokenData['https://purl.imsglobal.org/spec/lti/claim/resource_link'] || null;
 
-    // Extraer información del usuario y curso
-    const userInfo = {
-      lti_id: tokenData.sub,
-      name: tokenData.name || tokenData.given_name + ' ' + tokenData.family_name,
-      email: tokenData.email,
-      roles: tokenData['https://purl.imsglobal.org/spec/lti/claim/roles'] || [],
-      course_id: tokenData['https://purl.imsglobal.org/spec/lti/claim/context']?.id,
-      course_name: tokenData['https://purl.imsglobal.org/spec/lti/claim/context']?.label,
-      platform_id: tokenData.iss
+    const userBasics = {
+      sub: tokenData.sub,
+      name: tokenData.name || [tokenData.given_name, tokenData.family_name].filter(Boolean).join(' ') || 'Estudiante',
+      email: tokenData.email || null,
+      roles
     };
 
-    console.log('👤 User Info:', userInfo);
+    // Integraciones opcionales (no rompas si fallan)
+    let wpUser = null;
+    try { wpUser = await wordpressService.registerOrLoginUser?.(userBasics); } catch (e) { console.warn('WP link fail:', e?.message); }
 
-    // Registrar/actualizar usuario en WordPress
-    const wpUser = await wordpressService.registerOrLoginUser(userInfo);
-    console.log('✅ WordPress user:', wpUser.name);
+    let course = null;
+    try { course = await courseService.createOrUpdateCourse?.({
+      lti_course_id: context?.id,
+      name: context?.label || context?.title,
+      wp_user_id: wpUser?.id,
+      platform_id: tokenData.iss,
+      resource_link_id: resourceLink?.id
+    }); } catch (e) { console.warn('Course init fail:', e?.message); }
 
-    // Crear/actualizar curso si existe
-    let courseData = null;
-    if (userInfo.course_id) {
-      courseData = await courseService.createOrUpdateCourse({
-        lti_course_id: userInfo.course_id,
-        name: userInfo.course_name,
-        wp_user_id: wpUser.id,
-        platform_id: userInfo.platform_id
-      });
-    }
-
-    // Guardar en sesión
-    req.session.user = userInfo;
-    req.session.wpUser = wpUser;
-    req.session.course = courseData;
+    // sesión lista
     req.session.authenticated = true;
+    req.session.user = userBasics;
+    req.session.wpUser = wpUser;
+    req.session.course = course;
 
-    // Determinar rol y redireccionar
-    const isStudent = userInfo.roles.some(role => 
-      role.includes('Student') || role.includes('Learner')
-    );
-
-    if (isStudent) {
-      res.redirect('/student-dashboard');
-    } else {
-      res.redirect('/admin-dashboard');
-    }
-
+    const isInstructor = roles.some(r => r.includes('Instructor') || r.includes('TeachingAssistant'));
+    const dest = isInstructor ? '/admin-dashboard' : '/student-dashboard';
+    return res.redirect(dest);
   } catch (error) {
     console.error('❌ LTI Launch Error:', error);
-    res.status(500).send(`
+    return res.status(500).send(`
       <div style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
-        <h2 style="color: #dc2626;">Error de Conexión LTI</h2>
+        <h2 style="color:#dc2626">Error de Conexión LTI</h2>
         <p>No se pudo completar la conexión con Blackboard.</p>
-        <p><strong>Error:</strong> ${error.message}</p>
-        <a href="/lti/login" style="background: #4c51bf; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reintentar</a>
+        <pre style="text-align:left;white-space:pre-wrap;background:#f8fafc;padding:12px;border-radius:8px">${(error && error.message) || String(error)}</pre>
       </div>
     `);
   }
 });
 
-// Endpoint JWKS - DEBE coincidir con Blackboard config
-app.get('/.well-known/jwks.json', (req, res) => {
+// JWKS público (para registrar en Blackboard)
+app.get('/.well-known/jwks.json', (_req, res) => {
   try {
     const jwks = ltiService.getJWKS();
     res.json(jwks);
@@ -192,188 +289,100 @@ app.get('/.well-known/jwks.json', (req, res) => {
   }
 });
 
-// ===================
-// API ENDPOINTS
-// ===================
-
-// Middleware de autenticación
+/* ========= API PROTEGIDA ========= */
 const requireAuth = (req, res, next) => {
-  if (!req.session.authenticated || !req.session.user) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
+  if (!req.session?.authenticated || !req.session?.user) return res.status(401).json({ error: 'Authentication required' });
   next();
 };
 
-// Obtener información del usuario
 app.get('/api/user', requireAuth, (req, res) => {
-  res.json({
-    user: req.session.user,
-    wpUser: req.session.wpUser,
-    course: req.session.course
-  });
+  res.json({ user: req.session.user, wpUser: req.session.wpUser, course: req.session.course });
 });
 
-// Obtener camino del estudiante
 app.get('/api/student/pathway', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.wpUser.id;
-    const courseId = req.session.course?.id;
-    
-    const pathway = await courseService.getStudentPathway(userId, courseId);
-    res.json(pathway);
-  } catch (error) {
-    console.error('Error fetching pathway:', error);
+    const pathway = await courseService.getStudentPathway?.(req.session.wpUser?.id, req.session.course?.id);
+    res.json(pathway || {});
+  } catch (e) {
+    console.error('pathway error:', e);
     res.status(500).json({ error: 'Failed to fetch pathway' });
   }
 });
 
-// Obtener unidades activas
 app.get('/api/student/units', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.wpUser.id;
-    const courseId = req.session.course?.id;
-    
-    const units = await courseService.getActiveUnits(userId, courseId);
-    res.json(units);
-  } catch (error) {
-    console.error('Error fetching units:', error);
+    const units = await courseService.getActiveUnits?.(req.session.wpUser?.id, req.session.course?.id);
+    res.json(units || []);
+  } catch (e) {
+    console.error('units error:', e);
     res.status(500).json({ error: 'Failed to fetch units' });
   }
 });
 
-// Actualizar progreso
 app.post('/api/progress/update', requireAuth, async (req, res) => {
   try {
     const { unitId, contentId, completed, score } = req.body;
-    const userId = req.session.wpUser.id;
-    
-    const progress = await courseService.updateProgress(userId, unitId, contentId, completed, score);
-    res.json(progress);
-  } catch (error) {
-    console.error('Error updating progress:', error);
+    const progress = await courseService.updateProgress?.(req.session.wpUser?.id, unitId, contentId, completed, score);
+    res.json(progress || {});
+  } catch (e) {
+    console.error('progress error:', e);
     res.status(500).json({ error: 'Failed to update progress' });
   }
 });
 
-// ===================
-// RUTAS DE LA SPA
-// ===================
-
-// Rutas para el dashboard del estudiante
-app.get('/student-dashboard', (req, res) => {
-  if (!req.session.authenticated) {
-    return res.redirect('/');
-  }
-  
-  if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
-    res.sendFile(path.join(__dirname, '../client/build/index.html'));
-  } else {
-    res.redirect('http://localhost:3000/student-dashboard');
-  }
+/* ========= SPA ROUTES ========= */
+app.get('/student-dashboard', requireAuth, (_req, res) => {
+  if (isProd && hasBuild) return res.sendFile(path.join(CLIENT_BUILD, 'index.html'));
+  return res.redirect('http://localhost:3000/student-dashboard');
 });
 
-// Rutas para el dashboard del admin
-app.get('/admin-dashboard', (req, res) => {
-  if (!req.session.authenticated) {
-    return res.redirect('/');
-  }
-  
-  if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
-    res.sendFile(path.join(__dirname, '../client/build/index.html'));
-  } else {
-    res.redirect('http://localhost:3000/admin-dashboard');
-  }
+app.get('/admin-dashboard', requireAuth, (_req, res) => {
+  if (isProd && hasBuild) return res.sendFile(path.join(CLIENT_BUILD, 'index.html'));
+  return res.redirect('http://localhost:3000/admin-dashboard');
 });
 
-// Página de inicio
-app.get('/', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>ICN PAIM - Plataforma de Aprendizaje</title>
-      <style>
-        body { font-family: Arial, sans-serif; padding: 40px; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; margin: 0; }
-        .container { background: white; padding: 40px; border-radius: 20px; max-width: 600px; margin: 0 auto; box-shadow: 0 20px 60px rgba(0,0,0,0.2); }
-        h1 { color: #4c51bf; margin-bottom: 20px; }
-        .info { background: #f0f9ff; padding: 20px; border-radius: 10px; margin: 20px 0; }
-        .urls { text-align: left; background: #f8fafc; padding: 20px; border-radius: 10px; }
-        code { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-family: monospace; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <h1>🚀 ICN PAIM</h1>
-        <p>Plataforma de Aprendizaje Inteligente y Medición</p>
-        
-        <div class="info">
-          <h3>✅ Servidor funcionando correctamente</h3>
-          <p>Para acceder, usa el enlace LTI desde Blackboard</p>
-        </div>
-        
-        <div class="urls">
-          <h4>📋 URLs para configurar en Blackboard:</h4>
-          <p><strong>Login URL:</strong><br><code>https://icnpaim.cl/lti/login</code></p>
-          <p><strong>Launch URL:</strong><br><code>https://icnpaim.cl/lti/launch</code></p>
-          <p><strong>JWKS URL:</strong><br><code>https://icnpaim.cl/.well-known/jwks.json</code></p>
-          
-          <h4>🔑 Credenciales Blackboard:</h4>
-          <p><strong>Application Key:</strong> 89ef5212-b589-4f9c-b5b8-2fa6ad3e2006</p>
-          <p><strong>Deployment ID:</strong> 2b286722-4ef6-4dda-a756-eec5dca12441</p>
-        </div>
-        
-        <p><small>Timestamp: ${new Date().toLocaleString()}</small></p>
-      </div>
-    </body>
-    </html>
+// Home mínima con datos correctos (sin hardcodear keys random)
+app.get('/', (_req, res) => {
+  res.type('html').send(`
+    <!doctype html><html><head><meta charset="utf-8"><title>ICN PAIM</title></head>
+    <body style="font-family:system-ui;padding:32px">
+      <h2>🚀 ICN PAIM</h2>
+      <p><b>Base URL:</b> ${BASE_URL}</p>
+      <h3>URLs LTI</h3>
+      <ul>
+        <li>Login URL: <code>${BASE_URL}/lti/login</code></li>
+        <li>Launch URL: <code>${BASE_URL}/lti/launch</code></li>
+        <li>JWKS URL: <code>${BASE_URL}/.well-known/jwks.json</code></li>
+        <li>Health: <code>${BASE_URL}/lti/health</code></li>
+      </ul>
+      <h3>Credenciales</h3>
+      <ul>
+        <li>Client ID: <code>${LTI_CLIENT_ID}</code></li>
+        <li>Deployment ID: <code>${LTI_DEPLOYMENT_ID}</code></li>
+        <li>Issuer (ISS): <code>${LTI_PLATFORM_ISS}</code></li>
+      </ul>
+    </body></html>
   `);
 });
 
-// Endpoint de diagnóstico
-app.get('/lti/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    lti_config: {
-      client_id: '89ef5212-b589-4f9c-b5b8-2fa6ad3e2006',
-      deployment_id: '2b286722-4ef6-4dda-a756-eec5dca12441',
-      login_url: 'https://icnpaim.cl/lti/login',
-      launch_url: 'https://icnpaim.cl/lti/launch',
-      jwks_url: 'https://icnpaim.cl/.well-known/jwks.json'
-    },
-    integrations: {
-      wordpress: process.env.WORDPRESS_URL ? 'configured' : 'not configured',
-      mongodb: process.env.MONGO_URL ? 'configured' : 'not configured'
-    }
-  });
-});
-
-// Catch-all para React Router (solo en producción)
-if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../client/build/index.html'));
+// Catch-all de SPA SIN pisar LTI ni .well-known
+if (isProd && hasBuild) {
+  app.get(/^\/(?!lti\/|\.well-known\/|api\/).*/, (_req, res) => {
+    res.sendFile(path.join(CLIENT_BUILD, 'index.html'));
   });
 }
 
-// Manejo de errores
-app.use((error, req, res, next) => {
-  console.error('Server Error:', error);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
-  });
+/* ========= ERRORES ========= */
+app.use((err, _req, res, _next) => {
+  console.error('Server Error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
-// Iniciar servidor
-const PORT = process.env.PORT || 3333;
-const BASE_URL = process.env.RAILWAY_PUBLIC_DOMAIN 
-  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` 
-  : process.env.BASE_URL || 'https://icnpaim.cl';
+/* ========= START ========= */
 app.listen(PORT, () => {
-  console.log(`🚀 ICN PAIM Server running on port ${PORT}`);
-  console.log(`🔗 Login URL: ${BASE_URL}/lti/login`);
+  console.log(`🚀 ICN PAIM Server running on :${PORT}`);
+  console.log(`🔗 Login URL:  ${BASE_URL}/lti/login`);
   console.log(`🚀 Launch URL: ${BASE_URL}/lti/launch`);
-  console.log(`🔑 JWKS URL: ${BASE_URL}/.well-known/jwks.json`);
-  console.log(`📱 Dashboard: ${BASE_URL}/student-dashboard`);
+  console.log(`🔑 JWKS URL:   ${BASE_URL}/.well-known/jwks.json`);
+  console.log(`❤️ Health:     ${BASE_URL}/lti/health`);
 });

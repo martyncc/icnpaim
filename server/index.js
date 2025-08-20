@@ -7,9 +7,9 @@ const session = require('express-session');
 const path = require('path');
 const fs = require('fs');
 const helmet = require('helmet');
-const lti = require('ltijs').Provider; // 👈 singleton, NO new
+const lti = require('ltijs').Provider; // ← singleton, NO new
 
-// ===== Mini logger con buffer =====
+// ===== Mini logger =====
 const LOG_BUFFER_MAX = 200;
 const logs = [];
 function logEvent(type, message, meta) {
@@ -18,7 +18,7 @@ function logEvent(type, message, meta) {
   console.log(`[${entry.t}] [${type}] ${message}${meta ? ' | ' + JSON.stringify(meta) : ''}`);
 }
 
-// Servicios propios
+// Servicios propios (opcionales en launch)
 const wordpressService = require('./services/wordpressService');
 const courseService = require('./services/courseService');
 
@@ -33,7 +33,7 @@ const DEBUG_TOKEN = process.env.DEBUG_TOKEN || null;
 
 const LTI_CLIENT_ID = process.env.LTI_CLIENT_ID || '48dd70cc-ab62-4fbd-ba91-d3d984644373';
 const LTI_DEPLOYMENT_ID = process.env.LTI_DEPLOYMENT_ID || '2b286722-4ef6-4dda-a756-eec5dca12441';
-const LTI_ENCRYPTION_KEY = process.env.LTI_ENCRYPTION_KEY; // requerido
+const LTI_ENCRYPTION_KEY = process.env.LTI_ENCRYPTION_KEY;
 
 const LTI_PLATFORM_ISS = process.env.LTI_PLATFORM_ISS || 'https://udla-staging.blackboard.com';
 const LTI_PLATFORM_JWKS = process.env.LTI_PLATFORM_JWKS || 'https://udla-staging.blackboard.com/learn/api/lti/1.3/jwks';
@@ -52,7 +52,7 @@ logEvent('ENV', 'Boot env', {
 });
 if (!MONGO_URL || !LTI_ENCRYPTION_KEY) logEvent('CRITICAL', 'Faltan MONGO_URL o LTI_ENCRYPTION_KEY');
 
-/* ========= Infra básica ========= */
+/* ========= Infra ========= */
 app.set('trust proxy', 1);
 app.use((req, _res, next) => { logEvent('REQ', `${req.method} ${req.originalUrl}`); next(); });
 
@@ -120,7 +120,7 @@ app.all(['/lti/login/', '/lti/launch/'], (req, res) => {
   return res.redirect(code, target);
 });
 
-// Si el id_token cae por error en /lti/login, lo reenvío a /lti/launch
+// Si id_token cae en /lti/login, reenviar a /lti/launch como POST
 app.post('/lti/login', (req, res, next) => {
   const idt = req.body?.id_token;
   if (!idt) return next();
@@ -135,7 +135,7 @@ app.post('/lti/login', (req, res, next) => {
     </form><script>document.getElementById('f').submit();</script></body></html>`);
 });
 
-// Si llega GET /lti/launch?id_token=..., lo convierto a POST
+// GET /lti/launch?id_token=... -> POST /lti/launch
 app.get('/lti/launch', (req, res, next) => {
   const idt = req.query?.id_token;
   if (!idt) return next();
@@ -150,19 +150,19 @@ app.get('/lti/launch', (req, res, next) => {
 });
 
 /* ========= LTIJS ========= */
-// 👇 esta es la API correcta para tu versión (singleton con setup/deploy)
 lti.setup(
   LTI_ENCRYPTION_KEY,
   { url: MONGO_URL },
   {
-    appUrl: '/',                    // tu SPA vive en raíz
-    loginUrl: '/lti/login',         // OIDC Login de la herramienta
+    // ojo: ltijs protegerá las rutas que te mande tras lti.redirect
+    appUrl: '/',                   // puedes dejar '/', pero veremos rutas /:iss/* abajo
+    loginUrl: '/lti/login',
     keysetUrl: '/.well-known/jwks.json',
     cookies: { secure: true, sameSite: 'None' }
   }
 );
 
-// Logger de entrada /lti (después de normalizar, antes de montar ltijs.app)
+// Logger de entrada /lti
 let lastLtiReq = null;
 app.use('/lti', (req, _res, next) => {
   const snap = {
@@ -179,10 +179,10 @@ global.ltiReady = false; global.ltiError = null;
 
 (async () => {
   try {
-    await lti.deploy({ serverless: true }); // ← imprime “Ltijs started in serverless mode…”
-    app.use('/lti', lti.app);               // monta rutas ltijs (login/launch/jwks)
+    await lti.deploy({ serverless: true });
+    app.use('/lti', lti.app); // monta login/launch/jwks
 
-    // Registro de plataforma(s) tolerante a duplicados
+    // Registrar plataformas (tolerante a duplicados)
     const registerPlatform = async (url, name) => {
       try {
         await lti.registerPlatform({
@@ -199,7 +199,7 @@ global.ltiReady = false; global.ltiError = null;
     await registerPlatform(LTI_PLATFORM_ISS, 'UDLA Staging');
     await registerPlatform('https://blackboard.com', 'Blackboard Global Issuer');
 
-    // onConnect (launch validado)
+    // Launch validado
     lti.onConnect(async (token, req, res) => {
       try {
         const roles = token.userInfo?.roles || [];
@@ -219,6 +219,7 @@ global.ltiReady = false; global.ltiError = null;
         let course = null;
         try { course = await courseService.initFromLTI?.(context, resourceLink, wpUser); } catch (e) { logEvent('WARN','Course init failed',{ error: e?.message }); }
 
+        // Guarda en sesión si quieres usar tu API propia
         req.session.authenticated = true;
         req.session.user = userBasics;
         req.session.wpUser = wpUser;
@@ -226,8 +227,9 @@ global.ltiReady = false; global.ltiError = null;
 
         const isInstructor = roles.some(r => r.includes('Instructor') || r.includes('TeachingAssistant'));
         const dest = isInstructor ? '/admin-dashboard' : '/student-dashboard';
-        logEvent('LTI','onConnect redirect',{ dest, user: userBasics.sub, rolesCount: roles.length });
-        return res.redirect(dest);
+
+        // 🔴 IMPORTANTE: usar lti.redirect para adjuntar :iss y ?ltik=
+        lti.redirect(res, dest); // ← CLAVE (como en el demo) 
       } catch (err) {
         logEvent('ERROR','onConnect error',{ error: err?.message });
         return res.status(400).send('LTI onConnect failed');
@@ -276,7 +278,7 @@ app.get('/health', (_req, res) => res.json({
 }));
 app.get('/.well-known/health', (_req, res)=>res.redirect(301, '/health'));
 
-// Debug (protegido)
+// Debug
 app.all('/debug/echo', requireDebug, (req, res) => res.json({
   method: req.method, url: req.originalUrl, headers: req.headers,
   query: req.query, body: req.body, time: new Date().toISOString()
@@ -296,11 +298,16 @@ app.get('/debug/last-lti', requireDebug, (_req, res)=>res.json(lastLtiReq || { n
 const clientBuildDir = path.join(__dirname, '../client/build');
 logEvent('BOOT','build exists?', { exists: fs.existsSync(path.join(clientBuildDir,'index.html')) });
 if (isProd) app.use(express.static(clientBuildDir, { index: false }));
+
+// rutas protegidas por tu sesión (acceso directo fuera del LTI)
 if (isProd) {
   app.get('/student-dashboard', requireAuth, (_req,res)=>res.sendFile(path.join(clientBuildDir,'index.html')));
   app.get('/admin-dashboard', requireAuth, (_req,res)=>res.sendFile(path.join(clientBuildDir,'index.html')));
-  app.get(/^\/(?!api\/|lti\/|\.well-known\/|debug\/).*/, requireAuth, (req,res)=>res.sendFile(path.join(clientBuildDir,'index.html')));
 }
+
+// rutas a donde te llevará lti.redirect → incluyen :iss y ?ltik=...
+app.get('/:iss/student-dashboard', (_req,res)=>res.sendFile(path.join(clientBuildDir,'index.html')));
+app.get('/:iss/admin-dashboard', (_req,res)=>res.sendFile(path.join(clientBuildDir,'index.html')));
 
 // raíz info
 app.get('/', (_req,res)=>res.type('html').send(`

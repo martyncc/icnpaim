@@ -33,18 +33,18 @@ const BASE_URL = `https://${BASE_HOST}`;
 const isProd = process.env.NODE_ENV === 'production' || !!process.env.RAILWAY_ENVIRONMENT;
 const DEBUG_TOKEN = process.env.DEBUG_TOKEN || null; // si lo pones, protege /debug/*
 
-// LTI / Blackboard (usamos exactamente tus variables)
+// LTI / Blackboard
 const LTI_CLIENT_ID = process.env.LTI_CLIENT_ID || '48dd70cc-ab62-4fbd-ba91-d3d984644373';
 const LTI_DEPLOYMENT_ID = process.env.LTI_DEPLOYMENT_ID || '2b286722-4ef6-4dda-a756-eec5dca12441';
-const LTI_ENCRYPTION_KEY = process.env.LTI_ENCRYPTION_KEY; // DEBES definirlo
+const LTI_ENCRYPTION_KEY = process.env.LTI_ENCRYPTION_KEY; // requerido
 
 const LTI_PLATFORM_ISS = process.env.LTI_PLATFORM_ISS || 'https://udla-staging.blackboard.com';
 const LTI_PLATFORM_JWKS = process.env.LTI_PLATFORM_JWKS || 'https://udla-staging.blackboard.com/learn/api/lti/1.3/jwks';
 const LTI_PLATFORM_OIDC_AUTH = process.env.LTI_PLATFORM_OIDC_AUTH || 'https://udla-staging.blackboard.com/learn/api/lti/1.3/authorize';
 const LTI_PLATFORM_TOKEN_URL = process.env.LTI_PLATFORM_TOKEN_URL || 'https://udla-staging.blackboard.com/learn/api/lti/1.3/token';
 
-// Persistence para ltijs
-const MONGO_URL = process.env.MONGO_URL; // requerido por ltijs
+// Persistencia para ltijs
+const MONGO_URL = process.env.MONGO_URL;
 
 // Otros (tu proyecto)
 const SESSION_SECRET = process.env.SESSION_SECRET || 'icnpaim-session-secret-2024';
@@ -62,7 +62,7 @@ logEvent('ENV', 'Boot env', {
   LTI_PLATFORM_TOKEN_URL,
   MONGO_URL_set: !!MONGO_URL,
   LTI_ENCRYPTION_KEY_set: !!LTI_ENCRYPTION_KEY,
-  WORDPRESS_URL: process.env.WORDPRESS_URL || 'NOT SET'
+  WORDPRESS_URL: process.env.WORDPRESS_URL || 'NOT SET',
 });
 
 if (!LTI_PLATFORM_ISS || !LTI_PLATFORM_JWKS || !LTI_PLATFORM_OIDC_AUTH || !LTI_PLATFORM_TOKEN_URL) {
@@ -85,37 +85,50 @@ const allowedOrigins = new Set([
   'https://icnpaim.cl',
   'https://udla-staging.blackboard.com',
   'https://blackboard.com',
-  'http://localhost:3000'
+  'http://localhost:3000',
 ]);
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin) return cb(null, true);
-    try {
-      const hostname = new URL(origin).hostname;
-      if (allowedOrigins.has(origin) || /\.blackboard\.com$/.test(hostname)) return cb(null, true);
-    } catch (_e) {}
-    return cb(null, false);
-  },
-  credentials: true,
-  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization','X-Requested-With']
-}));
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+      try {
+        const hostname = new URL(origin).hostname;
+        if (allowedOrigins.has(origin) || /\.blackboard\.com$/.test(hostname)) return cb(null, true);
+      } catch (_e) {}
+      return cb(null, false);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  })
+);
 
 // Seguridad para iframe en Blackboard
-app.use(helmet({
-  frameguard: false,
-  contentSecurityPolicy: {
-    useDefaults: true,
-    directives: {
-      'frame-ancestors': ["'self'", 'https://*.blackboard.com', 'https://udla-staging.blackboard.com', 'https://icnpaim.cl', 'https://lti.icnpaim.cl']
-    }
-  },
-  crossOriginEmbedderPolicy: false
-}));
-app.use((req, res, next) => { res.setHeader('X-Robots-Tag', 'noindex'); next(); });
+app.use(
+  helmet({
+    frameguard: false,
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        'frame-ancestors': [
+          "'self'",
+          'https://*.blackboard.com',
+          'https://udla-staging.blackboard.com',
+          'https://icnpaim.cl',
+          'https://lti.icnpaim.cl',
+        ],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  })
+);
+app.use((req, res, next) => {
+  res.setHeader('X-Robots-Tag', 'noindex');
+  next();
+});
 
 // No cachear flujo LTI (rutas que manejará ltijs)
-app.use(['/lti/login','/lti/launch'], (_req, res, next) => {
+app.use(['/lti/login', '/lti/launch'], (_req, res, next) => {
   res.set('Cache-Control', 'no-store');
   next();
 });
@@ -124,19 +137,21 @@ app.use(['/lti/login','/lti/launch'], (_req, res, next) => {
 app.use(bodyParser.json({ limit: '1mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '1mb' }));
 
-app.use(session({
-  secret: SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  name: 'icnpaim.sid',
-  cookie: {
-    secure: isProd,
-    httpOnly: true,
-    sameSite: isProd ? 'none' : 'lax',
-    maxAge: 24 * 60 * 60 * 1000
-    // domain: isProd ? '.icnpaim.cl' : undefined,
-  }
-}));
+app.use(
+  session({
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    name: 'icnpaim.sid',
+    cookie: {
+      secure: isProd,
+      httpOnly: true,
+      sameSite: isProd ? 'none' : 'lax',
+      maxAge: 24 * 60 * 60 * 1000,
+      // domain: isProd ? '.icnpaim.cl' : undefined,
+    },
+  })
+);
 
 /* ========= HELPERS ========= */
 const requireAuth = (req, res, next) => {
@@ -156,45 +171,83 @@ const requireDebug = (req, res, next) => {
 app.all(/^\/client(\/.*)?$/, (_req, res) => res.status(404).send('Not found'));
 app.all(/^\/public(\/.*)?$/, (_req, res) => res.status(404).send('Not found'));
 
-/* ========= LTIJS: Provider ========= */
-lti.setup(
-  LTI_ENCRYPTION_KEY,
-  { url: MONGO_URL },
-  {
-    appUrl: '/',                    // tu SPA vive en raíz
-    loginUrl: '/lti/login',         // OIDC Login de la herramienta
-    keysetUrl: '/.well-known/jwks.json',
-    cookies: { secure: true, sameSite: 'None' }
-  }
-);
+// --- favicon público para que el iframe no llore por 401
+app.get('/favicon.ico', (_req, res) => res.sendStatus(204));
 
-// ===== RUTAS PUBLICAS PRE-LTI (para que no choquen con el guard de ltijs) =====
-app.get('/lti/health', (_req, res) => res.status(200).json({ status: 'OK', moved: '/health', reason: 'health under /lti is guarded by ltijs; use /health' }));
-app.get('/lti/live', (_req, res) => res.status(200).send('live'));
-app.get('/lti/ready', (_req, res) => global.ltiReady ? res.status(200).send('ready') : res.status(503).send('not-ready'));
+/* ========= NORMALIZADORES / PUENTES *ANTES* DE MONTAR ltijs ========= */
 
-// ===== Puente para plataformas que POSTean id_token a /lti/login por error (redirige a /lti/launch) =====
+// Normalizador: /lti/login/ -> /lti/login   y   /lti/launch/ -> /lti/launch
+app.all(['/lti/login/', '/lti/launch/'], (req, res) => {
+  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  const target = req.path.slice(0, -1) + qs;
+  const code = req.method === 'POST' ? 307 : 302; // 307 conserva body en POST
+  return res.redirect(code, target);
+});
+
+// Puente: si Blackboard postea id_token a /lti/login, reenvío a /lti/launch
 app.post('/lti/login', (req, res, next) => {
   try {
     const idt = req.body?.id_token;
     const state = req.body?.state || '';
     if (!idt) return next(); // deja que ltijs maneje el login normal
-    logEvent('LTI-BRIDGE', 'POST id_token recibido en /lti/login; reenviando a /lti/launch', { hasIdToken: true, hasState: !!state });
-    const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    return res.status(200).type('html').send(`<!doctype html><html><body>
-      <form id="f" method="post" action="/lti/launch">
-        <input type="hidden" name="id_token" value="${esc(idt)}" />
-        <input type="hidden" name="state" value="${esc(state)}" />
-      </form>
-      <script>document.getElementById('f').submit();</script>
-    </body></html>`);
+    logEvent('LTI-BRIDGE', 'POST id_token en /lti/login; reenviando a /lti/launch', {
+      hasIdToken: true,
+      hasState: !!state,
+    });
+    const esc = (s) =>
+      String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    return res
+      .status(200)
+      .type('html')
+      .send(`<!doctype html><html><body>
+        <form id="f" method="post" action="/lti/launch">
+          <input type="hidden" name="id_token" value="${esc(idt)}" />
+          <input type="hidden" name="state" value="${esc(state)}" />
+        </form>
+        <script>document.getElementById('f').submit();</script>
+      </body></html>`);
   } catch (e) {
     logEvent('ERROR', 'bridge /lti/login -> /lti/launch failed', { error: e?.message });
     return res.status(400).send('Bridge failed');
   }
 });
 
-// ===== Logger de entrada para TODO lo que llegue a /lti (para debug del flujo) =====
+// Si POR RAREZA llega GET /lti/launch?id_token=..., lo convierto a POST form_post
+app.get('/lti/launch', (req, res, next) => {
+  const idt = req.query?.id_token;
+  if (!idt) return next();
+  const state = req.query?.state || '';
+  const esc = (s) =>
+    String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  return res
+    .status(200)
+    .type('html')
+    .send(`<!doctype html><html><body>
+      <form id="f" method="post" action="/lti/launch">
+        <input type="hidden" name="id_token" value="${esc(idt)}" />
+        <input type="hidden" name="state" value="${esc(state)}" />
+      </form>
+      <script>document.getElementById('f').submit();</script>
+    </body></html>`);
+});
+
+/* ========= LTIJS: Provider ========= */
+lti.setup(LTI_ENCRYPTION_KEY, { url: MONGO_URL }, {
+  appUrl: '/',                    // tu SPA vive en raíz
+  loginUrl: '/lti/login',         // OIDC Login de la herramienta
+  keysetUrl: '/.well-known/jwks.json',
+  cookies: { secure: true, sameSite: 'None' },
+});
+
+// ===== Logger de entrada para TODO lo que llegue a /lti (tras normalizar) =====
 let lastLtiReq = null;
 app.use('/lti', (req, _res, next) => {
   const snapshot = {
@@ -204,13 +257,11 @@ app.use('/lti', (req, _res, next) => {
       'content-type': req.get('content-type'),
       'user-agent': req.get('user-agent'),
       origin: req.get('origin'),
-      referer: req.get('referer')
+      referer: req.get('referer'),
     },
-    query: req.query
+    query: req.query,
   };
-  if (req.method === 'POST') {
-    snapshot.bodyKeys = Object.keys(req.body || {});
-  }
+  if (req.method === 'POST') snapshot.bodyKeys = Object.keys(req.body || {});
   lastLtiReq = snapshot;
   logEvent('LTI-IN', 'incoming /lti request', snapshot);
   next();
@@ -227,24 +278,24 @@ global.ltiError = null;
     app.use('/lti', lti.app); // monta rutas internas de ltijs (login/launch/jwks)
 
     // helper para registrar plataforma, tolerante a duplicados
-const registerPlatform = async (url, name) => {
-  try {
-    await lti.registerPlatform({
-      url,
-      name,
-      clientId: LTI_CLIENT_ID,
-      authenticationEndpoint: LTI_PLATFORM_OIDC_AUTH,
-      authTokenEndpoint: LTI_PLATFORM_TOKEN_URL,
-      keysetUrl: LTI_PLATFORM_JWKS
-    });
-    logEvent('LTI', 'Platform registered', { url });
-  } catch (e) {
-    logEvent('WARN', 'registerPlatform failed or already exists', { url, error: e?.message });
-  }
-};
+    const registerPlatform = async (url, name) => {
+      try {
+        await lti.registerPlatform({
+          url,
+          name,
+          clientId: LTI_CLIENT_ID,
+          authenticationEndpoint: LTI_PLATFORM_OIDC_AUTH,
+          authTokenEndpoint: LTI_PLATFORM_TOKEN_URL,
+          keysetUrl: LTI_PLATFORM_JWKS,
+        });
+        logEvent('LTI', 'Platform registered', { url });
+      } catch (e) {
+        logEvent('WARN', 'registerPlatform failed or already exists', { url, error: e?.message });
+      }
+    };
 
-await registerPlatform(LTI_PLATFORM_ISS, 'UDLA Staging');
-await registerPlatform('https://blackboard.com', 'Blackboard Global Issuer');
+    await registerPlatform(LTI_PLATFORM_ISS, 'UDLA Staging');
+    await registerPlatform('https://blackboard.com', 'Blackboard Global Issuer');
 
     // Qué hacer cuando el launch fue validado
     lti.onConnect(async (token, req, res) => {
@@ -257,10 +308,10 @@ await registerPlatform('https://blackboard.com', 'Blackboard Global Issuer');
           sub: token.user,
           name: token.userInfo?.name || token.userInfo?.given_name || 'Estudiante',
           email: token.userInfo?.email || null,
-          roles
+          roles,
         };
 
-        // Integraciones opcionales (no rompas si fallan)
+        // Integraciones opcionales (no romper si fallan)
         let wpUser = null;
         try { wpUser = await wordpressService.ensureUser?.(userBasics); } catch (e) { logEvent('WARN', 'WP user linking failed', { error: e?.message }); }
 
@@ -293,13 +344,15 @@ await registerPlatform('https://blackboard.com', 'Blackboard Global Issuer');
 })();
 
 /* ========= HEALTH / DEBUG ========= */
-// Endpoints compatibles con checkers tontos (y con humanos cansados)
-app.get('/lti/health', (_req, res) => res.status(200).json({ status: 'OK', moved: '/health', reason: 'health under /lti is guarded by ltijs; use /health' }));
+// Endpoints compatibles con checkers “creativos”
+app.get('/lti/health', (_req, res) =>
+  res.status(200).json({ status: 'OK', moved: '/health', reason: 'health under /lti is guarded by ltijs; use /health' })
+);
 app.get('/lti/live', (_req, res) => res.status(200).send('live'));
-app.get('/lti/ready', (_req, res) => global.ltiReady ? res.status(200).send('ready') : res.status(503).send('not-ready'));
+app.get('/lti/ready', (_req, res) => (global.ltiReady ? res.status(200).send('ready') : res.status(503).send('not-ready')));
 
 app.get('/live', (_req, res) => res.status(200).send('live'));
-app.get('/ready', (_req, res) => global.ltiReady ? res.status(200).send('ready') : res.status(503).send('not-ready'));
+app.get('/ready', (_req, res) => (global.ltiReady ? res.status(200).send('ready') : res.status(503).send('not-ready')));
 
 app.get('/health', (_req, res) => {
   res.json({
@@ -320,7 +373,7 @@ app.get('/health', (_req, res) => {
       platform_iss: LTI_PLATFORM_ISS,
       platform_jwks: LTI_PLATFORM_JWKS,
       platform_oidc_auth: LTI_PLATFORM_OIDC_AUTH,
-      platform_token_url: LTI_PLATFORM_TOKEN_URL
+      platform_token_url: LTI_PLATFORM_TOKEN_URL,
     },
     environment_variables: {
       LTI_CLIENT_ID: !!process.env.LTI_CLIENT_ID,
@@ -332,8 +385,8 @@ app.get('/health', (_req, res) => {
       WORDPRESS_URL: !!process.env.WORDPRESS_URL,
       SESSION_SECRET: !!process.env.SESSION_SECRET,
       LTI_ENCRYPTION_KEY: !!process.env.LTI_ENCRYPTION_KEY,
-      MONGO_URL: !!process.env.MONGO_URL
-    }
+      MONGO_URL: !!process.env.MONGO_URL,
+    },
   });
 });
 app.get('/.well-known/health', (_req, res) => res.redirect(301, '/health'));
@@ -346,14 +399,13 @@ app.all('/debug/echo', requireDebug, (req, res) => {
     headers: req.headers,
     query: req.query,
     body: req.body,
-    time: new Date().toISOString()
+    time: new Date().toISOString(),
   });
 });
 app.get('/debug/logs', requireDebug, (_req, res) => {
   res.json({ count: logs.length, logs });
 });
 app.get('/debug/env', requireDebug, (_req, res) => {
-  // Nunca exponemos secretos en claro
   res.json({
     NODE_ENV: process.env.NODE_ENV,
     BASE_HOST: process.env.BASE_HOST,
@@ -369,12 +421,10 @@ app.get('/debug/env', requireDebug, (_req, res) => {
       LTI_ENCRYPTION_KEY: !!process.env.LTI_ENCRYPTION_KEY,
       MONGO_URL: !!process.env.MONGO_URL,
       SESSION_SECRET: !!process.env.SESSION_SECRET,
-      DEBUG_TOKEN: !!process.env.DEBUG_TOKEN
-    }
+      DEBUG_TOKEN: !!process.env.DEBUG_TOKEN,
+    },
   });
 });
-
-// Última solicitud /lti capturada (para entender si Blackboard manda GET o POST, etc.)
 app.get('/debug/last-lti', requireDebug, (_req, res) => {
   res.json(lastLtiReq || { note: 'No LTI request captured yet' });
 });
@@ -386,11 +436,15 @@ if (isProd) {
   app.use(express.static(clientBuildDir, { index: false }));
 }
 
-// 2) HTML de la SPA (rutas protegidas)
+// HTML de la SPA (rutas protegidas)
 if (isProd) {
-  app.get('/student-dashboard', requireAuth, (_req, res) => res.sendFile(path.join(clientBuildDir, 'index.html')));
-  app.get('/admin-dashboard', requireAuth, (_req, res) => res.sendFile(path.join(clientBuildDir, 'index.html')));
-  // Catch-all: todo lo que no sea /api o /lti o /.well-known -> SPA (protegida)
+  app.get('/student-dashboard', requireAuth, (_req, res) =>
+    res.sendFile(path.join(clientBuildDir, 'index.html'))
+  );
+  app.get('/admin-dashboard', requireAuth, (_req, res) =>
+    res.sendFile(path.join(clientBuildDir, 'index.html'))
+  );
+  // Catch-all: todo lo que no sea /api, /lti, /.well-known o /debug -> SPA (protegida)
   app.get(/^\/(?!api\/|lti\/|\.well-known\/|debug\/).*/, requireAuth, (req, res) => {
     res.sendFile(path.join(clientBuildDir, 'index.html'));
   });
@@ -398,7 +452,9 @@ if (isProd) {
 
 // Página mínima raíz (info, NO SPA)
 app.get('/', (_req, res) => {
-  res.type('html').send(`
+  res
+    .type('html')
+    .send(`
     <!DOCTYPE html><html><head><meta charset="utf-8"><title>ICN PAIM</title></head>
     <body>
       <h3>🚀 ICN PAIM - Servidor OK</h3>
@@ -425,23 +481,6 @@ app.get('/', (_req, res) => {
     </body></html>
   `);
 });
-// --- Normalizador de rutas LTI: quita la barra final y preserva querystring ---
-function redirectNoTrailingSlash(req, res, next) {
-  // Solo para GET/POST de las rutas problemáticas
-  const isLogin = req.path === '/lti/login/';
-  const isLaunch = req.path === '/lti/launch/';
-  if (!isLogin && !isLaunch) return next();
-
-  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-  const target = req.path.slice(0, -1) + qs; // quita la barra final
-
-  // Si es POST (por ejemplo, un form_post de id_token), usa 307 para conservar método y body
-  const code = req.method === 'POST' ? 307 : 302;
-  return res.redirect(code, target);
-}
-
-// Aplica el normalizador ANTES de montar ltijs
-app.all(['/lti/login/', '/lti/launch/'], redirectNoTrailingSlash);
 
 /* ========= ERRORES / START ========= */
 app.use((error, _req, res, _next) => {

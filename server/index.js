@@ -7,9 +7,9 @@ const session = require('express-session');
 const path = require('path');
 const fs = require('fs');
 const helmet = require('helmet');
-const { Provider: LtiProvider } = require('ltijs');
+const lti = require('ltijs').Provider; // 👈 singleton, NO new
 
-// ===== Mini logger =====
+// ===== Mini logger con buffer =====
 const LOG_BUFFER_MAX = 200;
 const logs = [];
 function logEvent(type, message, meta) {
@@ -33,7 +33,7 @@ const DEBUG_TOKEN = process.env.DEBUG_TOKEN || null;
 
 const LTI_CLIENT_ID = process.env.LTI_CLIENT_ID || '48dd70cc-ab62-4fbd-ba91-d3d984644373';
 const LTI_DEPLOYMENT_ID = process.env.LTI_DEPLOYMENT_ID || '2b286722-4ef6-4dda-a756-eec5dca12441';
-const LTI_ENCRYPTION_KEY = process.env.LTI_ENCRYPTION_KEY;
+const LTI_ENCRYPTION_KEY = process.env.LTI_ENCRYPTION_KEY; // requerido
 
 const LTI_PLATFORM_ISS = process.env.LTI_PLATFORM_ISS || 'https://udla-staging.blackboard.com';
 const LTI_PLATFORM_JWKS = process.env.LTI_PLATFORM_JWKS || 'https://udla-staging.blackboard.com/learn/api/lti/1.3/jwks';
@@ -52,7 +52,7 @@ logEvent('ENV', 'Boot env', {
 });
 if (!MONGO_URL || !LTI_ENCRYPTION_KEY) logEvent('CRITICAL', 'Faltan MONGO_URL o LTI_ENCRYPTION_KEY');
 
-// ===== Infra básica
+/* ========= Infra básica ========= */
 app.set('trust proxy', 1);
 app.use((req, _res, next) => { logEvent('REQ', `${req.method} ${req.originalUrl}`); next(); });
 
@@ -61,9 +61,13 @@ app.use(cors({
     if (!origin) return cb(null, true);
     try {
       const hostname = new URL(origin).hostname;
-      if (origin === `https://${BASE_HOST}` || origin === 'https://icnpaim.cl' ||
-          origin === 'https://udla-staging.blackboard.com' || origin === 'https://blackboard.com' ||
-          /^.*\.blackboard\.com$/.test(hostname)) return cb(null, true);
+      if (
+        origin === `https://${BASE_HOST}` ||
+        origin === 'https://icnpaim.cl' ||
+        origin === 'https://udla-staging.blackboard.com' ||
+        origin === 'https://blackboard.com' ||
+        /\.blackboard\.com$/.test(hostname)
+      ) return cb(null, true);
     } catch {}
     return cb(null, false);
   },
@@ -83,9 +87,10 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 app.use((req, res, next) => { res.setHeader('X-Robots-Tag', 'noindex'); next(); });
+
 app.use(['/lti/login','/lti/launch'], (_req, res, next) => { res.set('Cache-Control','no-store'); next(); });
 
-/* ========= Parsers / session ========= */
+/* ========= Parsers / sesión ========= */
 app.use(bodyParser.json({ limit: '1mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '1mb' }));
 app.use(session({
@@ -121,7 +126,7 @@ app.post('/lti/login', (req, res, next) => {
   if (!idt) return next();
   const state = req.body?.state || '';
   const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
-      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                            .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   logEvent('LTI-BRIDGE','POST id_token en /lti/login; reenviando a /lti/launch',{ hasIdToken:true, hasState:!!state });
   return res.status(200).type('html').send(`<!doctype html><html><body>
     <form id="f" method="post" action="/lti/launch">
@@ -130,13 +135,13 @@ app.post('/lti/login', (req, res, next) => {
     </form><script>document.getElementById('f').submit();</script></body></html>`);
 });
 
-// Si (rarísimo) llega GET /lti/launch?id_token=..., lo convierto a POST
+// Si llega GET /lti/launch?id_token=..., lo convierto a POST
 app.get('/lti/launch', (req, res, next) => {
   const idt = req.query?.id_token;
   if (!idt) return next();
   const state = req.query?.state || '';
   const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
-      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                            .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   return res.status(200).type('html').send(`<!doctype html><html><body>
     <form id="f" method="post" action="/lti/launch">
       <input type="hidden" name="id_token" value="${esc(idt)}"/>
@@ -145,11 +150,19 @@ app.get('/lti/launch', (req, res, next) => {
 });
 
 /* ========= LTIJS ========= */
-const lti = new LtiProvider(LTI_ENCRYPTION_KEY, { url: MONGO_URL }, {
-  appUrl: '/', loginUrl: '/lti/login', keysetUrl: '/.well-known/jwks.json',
-  cookies: { secure: true, sameSite: 'None' }
-});
+// 👇 esta es la API correcta para tu versión (singleton con setup/deploy)
+lti.setup(
+  LTI_ENCRYPTION_KEY,
+  { url: MONGO_URL },
+  {
+    appUrl: '/',                    // tu SPA vive en raíz
+    loginUrl: '/lti/login',         // OIDC Login de la herramienta
+    keysetUrl: '/.well-known/jwks.json',
+    cookies: { secure: true, sameSite: 'None' }
+  }
+);
 
+// Logger de entrada /lti (después de normalizar, antes de montar ltijs.app)
 let lastLtiReq = null;
 app.use('/lti', (req, _res, next) => {
   const snap = {
@@ -166,9 +179,10 @@ global.ltiReady = false; global.ltiError = null;
 
 (async () => {
   try {
-    await lti.deploy({ serverless: true });
-    app.use('/lti', lti.app);
+    await lti.deploy({ serverless: true }); // ← imprime “Ltijs started in serverless mode…”
+    app.use('/lti', lti.app);               // monta rutas ltijs (login/launch/jwks)
 
+    // Registro de plataforma(s) tolerante a duplicados
     const registerPlatform = async (url, name) => {
       try {
         await lti.registerPlatform({
@@ -185,6 +199,7 @@ global.ltiReady = false; global.ltiError = null;
     await registerPlatform(LTI_PLATFORM_ISS, 'UDLA Staging');
     await registerPlatform('https://blackboard.com', 'Blackboard Global Issuer');
 
+    // onConnect (launch validado)
     lti.onConnect(async (token, req, res) => {
       try {
         const roles = token.userInfo?.roles || [];
@@ -232,6 +247,7 @@ app.get('/lti/live', (_req, res)=>res.status(200).send('live'));
 app.get('/lti/ready', (_req, res)=>global.ltiReady ? res.status(200).send('ready') : res.status(503).send('not-ready'));
 app.get('/live', (_req, res)=>res.status(200).send('live'));
 app.get('/ready', (_req, res)=>global.ltiReady ? res.status(200).send('ready') : res.status(503).send('not-ready'));
+
 app.get('/health', (_req, res) => res.json({
   status: 'OK', timestamp: new Date().toISOString(),
   env: process.env.NODE_ENV || 'development', base_url: BASE_URL, base_host: BASE_HOST,
@@ -260,7 +276,7 @@ app.get('/health', (_req, res) => res.json({
 }));
 app.get('/.well-known/health', (_req, res)=>res.redirect(301, '/health'));
 
-// Debug
+// Debug (protegido)
 app.all('/debug/echo', requireDebug, (req, res) => res.json({
   method: req.method, url: req.originalUrl, headers: req.headers,
   query: req.query, body: req.body, time: new Date().toISOString()

@@ -2,6 +2,7 @@
   text-align: center;
 }
 
+/* Utilidades personalizadas */
 .line-clamp-3 {
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -9,7 +10,57 @@
   overflow: hidden;
 }
 
-/* Animaciones personalizadas */
+/* Animaciones suaves */
+* {
+  transition: all 0.2s ease-in-out;
+}
+
+/* Scrollbar personalizado */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* Estilos para contenido HTML */
+.prose {
+  max-width: none;
+}
+
+.prose h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: #1f2937;
+}
+
+.prose p {
+  margin-bottom: 1rem;
+  line-height: 1.6;
+}
+
+.prose ul {
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+}
+
+.prose li {
+  margin-bottom: 0.5rem;
+}
+
+/* Animaciones de carga */
 @keyframes shimmer {
   0% {
     transform: translateX(-100%);
@@ -23,25 +74,6 @@
   animation: shimmer 2s infinite;
 }
 
-/* Estilos para el loading spinner */
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.animate-spin {
-  animation: spin 1s linear infinite;
-}
-
-/* Gradientes personalizados */
-.bg-gradient-to-br {
-  background-image: linear-gradient(to bottom right, var(--tw-gradient-stops));
-}
-
 /* Efectos de hover mejorados */
 .hover\:-translate-y-1:hover {
   transform: translateY(-0.25rem);
@@ -52,7 +84,7 @@
   backdrop-filter: blur(4px);
 }
 
-/* Estilos responsivos mejorados */
+/* Responsive design mejorado */
 @media (max-width: 768px) {
   .grid-cols-1 {
     grid-template-columns: repeat(1, minmax(0, 1fr));

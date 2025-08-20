@@ -1,161 +1,233 @@
-// server/index.js — ltijs “demo-style” pero con tus variables y /lti/health abierto
 require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
-const express = require('express');
-
-// ltijs: singleton, NO "new"
 const lti = require('ltijs').Provider;
 
-/* ===== ENV ===== */
+// Configuración de variables de entorno
 const PORT = process.env.PORT || 3333;
+const MONGO_URL = process.env.MONGO_URL || 'mongodb://localhost:27017/ltijs';
+const LTI_KEY = process.env.LTI_KEY || 'LTIKEY';
 
-// clave de cifrado (usa la tuya)
-const ENCRYPTION_KEY = process.env.LTI_ENCRYPTION_KEY || process.env.LTI_KEY;
+// Configuración de la plataforma (Blackboard)
+const PLATFORM_URL = process.env.PLATFORM_URL || 'https://blackboard.com';
+const CLIENT_ID = process.env.CLIENT_ID || '48dd70cc-ab62-4fbd-ba91-d3d984644373';
+const DEPLOYMENT_ID = process.env.DEPLOYMENT_ID || '2b286722-4ef6-4dda-a756-eec5dca12441';
+const AUTH_ENDPOINT = process.env.AUTH_ENDPOINT || 'https://udla-staging.blackboard.com/learn/api/public/v1/oidc/authorize';
+const TOKEN_ENDPOINT = process.env.TOKEN_ENDPOINT || 'https://udla-staging.blackboard.com/learn/api/public/v1/oidc/token';
+const JWKS_ENDPOINT = process.env.JWKS_ENDPOINT || 'https://udla-staging.blackboard.com/learn/api/public/v1/oidc/jwks';
 
-// Mongo: usa MONGO_URL directo; si no, podrías armarla como en el demo (DB_HOST/DB_NAME)
-const MONGO_URL = process.env.MONGO_URL;
+// Configuración de WordPress
+const WORDPRESS_URL = process.env.WORDPRESS_URL;
+const WORDPRESS_USER = process.env.WORDPRESS_USER;
+const WORDPRESS_PASSWORD = process.env.WORDPRESS_PASSWORD;
 
-// Blackboard (tus vars)
-const LTI_CLIENT_ID          = process.env.LTI_CLIENT_ID;
-const LTI_PLATFORM_ISS       = process.env.LTI_PLATFORM_ISS;        // https://udla-staging.blackboard.com
-const LTI_PLATFORM_OIDC_AUTH = process.env.LTI_PLATFORM_OIDC_AUTH;  // /learn/api/lti/1.3/authorize
-const LTI_PLATFORM_TOKEN_URL = process.env.LTI_PLATFORM_TOKEN_URL;  // /learn/api/lti/1.3/token
-const LTI_PLATFORM_JWKS      = process.env.LTI_PLATFORM_JWKS;       // /learn/api/lti/1.3/jwks
-
-// sirve tu React build como estático (igual que el demo, pero con client/build)
+// Directorio de archivos estáticos (React build)
 const STATIC_DIR = fs.existsSync(path.join(__dirname, '../client/build/index.html'))
   ? path.join(__dirname, '../client/build')
-  : path.join(__dirname, './public'); // fallback
+  : path.join(__dirname, '../public');
 
-/* ===== sanity check minimal ===== */
-function must(name, v) { if (!v) throw new Error(`Falta ${name}`); }
-must('ENCRYPTION_KEY', ENCRYPTION_KEY);
-must('MONGO_URL', MONGO_URL);
-must('LTI_CLIENT_ID', LTI_CLIENT_ID);
-must('LTI_PLATFORM_ISS', LTI_PLATFORM_ISS);
-must('LTI_PLATFORM_OIDC_AUTH', LTI_PLATFORM_OIDC_AUTH);
-must('LTI_PLATFORM_TOKEN_URL', LTI_PLATFORM_TOKEN_URL);
-must('LTI_PLATFORM_JWKS', LTI_PLATFORM_JWKS);
+console.log('🚀 Iniciando servidor LTI.js...');
+console.log('📁 Directorio estático:', STATIC_DIR);
 
-/* ===== ltijs setup =====
-   OJO: NO seteo appUrl a /lti/launch. Lo dejo por defecto para que /lti/health no quede “protegido”.
-*/
+// Configuración de LTI.js
 lti.setup(
-  ENCRYPTION_KEY,
+  LTI_KEY,
   { url: MONGO_URL },
   {
     staticPath: STATIC_DIR,
     cookies: {
-      secure: true,        // prod + https
-      sameSite: 'None'     // cross-site con *.blackboard.com
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'None' : 'Lax'
     },
-    devMode: false,
-    loginUrl: '/lti/login',
-    keysetUrl: '/.well-known/jwks.json'
+    devMode: process.env.NODE_ENV !== 'production'
   }
 );
 
-/* ===== launch OK: entrega tu index.html (como el demo) ===== */
-lti.onConnect(async (_token, _req, res) => {
-  return res.sendFile(path.join(STATIC_DIR, 'index.html'));
+// Manejo de conexión exitosa (launch)
+lti.onConnect(async (token, req, res) => {
+  try {
+    console.log('✅ Conexión LTI exitosa');
+    console.log('👤 Usuario:', token.userInfo.name);
+    console.log('📚 Curso:', token.platformContext.label);
+
+    // Extraer información del token
+    const userInfo = {
+      id: token.userInfo.sub,
+      name: token.userInfo.name,
+      email: token.userInfo.email,
+      roles: token.userInfo.roles,
+      course: {
+        id: token.platformContext.id,
+        label: token.platformContext.label,
+        title: token.platformContext.title
+      },
+      platform: token.iss
+    };
+
+    // Guardar información en la sesión
+    req.session.userInfo = userInfo;
+    req.session.authenticated = true;
+
+    // Sincronizar con WordPress si está configurado
+    if (WORDPRESS_URL) {
+      try {
+        await syncWithWordPress(userInfo);
+        console.log('✅ Sincronización con WordPress exitosa');
+      } catch (error) {
+        console.error('❌ Error sincronizando con WordPress:', error.message);
+      }
+    }
+
+    // Servir la aplicación React
+    return res.sendFile(path.join(STATIC_DIR, 'index.html'));
+  } catch (error) {
+    console.error('❌ Error en onConnect:', error);
+    return res.status(500).send('Error de conexión LTI');
+  }
 });
 
-/* ===== deep linking (opcional, igual que demo) ===== */
-lti.onDeepLinking(async (_token, _req, res) => {
+// Manejo de Deep Linking (opcional)
+lti.onDeepLinking(async (token, req, res) => {
+  console.log('🔗 Deep Linking request');
   return lti.redirect(res, '/deeplink', { newResource: true });
 });
 
-/* ===== rutas públicas y utilidades EN el servidor ltijs ===== */
-const router = express.Router();
+// Función para sincronizar con WordPress
+async function syncWithWordPress(userInfo) {
+  if (!WORDPRESS_URL || !WORDPRESS_USER || !WORDPRESS_PASSWORD) {
+    throw new Error('Configuración de WordPress incompleta');
+  }
 
-// normaliza barra final en /lti/login/ y /lti/launch/
-router.all(['/lti/login/', '/lti/launch/'], (req, res) => {
-  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-  const target = req.path.slice(0, -1) + qs;
-  const code = req.method === 'POST' ? 307 : 302;
-  return res.redirect(code, target);
+  const axios = require('axios');
+  const auth = Buffer.from(`${WORDPRESS_USER}:${WORDPRESS_PASSWORD}`).toString('base64');
+
+  try {
+    // Buscar o crear usuario en WordPress
+    const response = await axios.get(`${WORDPRESS_URL}/wp-json/wp/v2/users`, {
+      headers: { 'Authorization': `Basic ${auth}` },
+      params: { search: userInfo.email }
+    });
+
+    if (response.data.length === 0) {
+      // Crear nuevo usuario
+      await axios.post(`${WORDPRESS_URL}/wp-json/wp/v2/users`, {
+        username: generateUsername(userInfo.email),
+        email: userInfo.email,
+        name: userInfo.name,
+        password: generatePassword(),
+        roles: mapLTIRoles(userInfo.roles)
+      }, {
+        headers: { 'Authorization': `Basic ${auth}` }
+      });
+      console.log('👤 Usuario creado en WordPress');
+    } else {
+      console.log('👤 Usuario existente en WordPress');
+    }
+
+    // Crear o actualizar curso si no existe
+    if (userInfo.course) {
+      await createOrUpdateCourse(userInfo.course, auth);
+    }
+
+  } catch (error) {
+    console.error('Error en WordPress API:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+// Funciones auxiliares
+function generateUsername(email) {
+  return email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + Date.now().toString().slice(-4);
+}
+
+function generatePassword() {
+  return Math.random().toString(36).slice(-12) + '!A1';
+}
+
+function mapLTIRoles(roles) {
+  if (!roles || roles.length === 0) return ['subscriber'];
+  
+  for (const role of roles) {
+    if (role.includes('Instructor')) return ['editor'];
+    if (role.includes('Administrator')) return ['administrator'];
+  }
+  return ['subscriber'];
+}
+
+async function createOrUpdateCourse(courseInfo, auth) {
+  const axios = require('axios');
+  
+  try {
+    // Buscar curso existente
+    const response = await axios.get(`${WORDPRESS_URL}/wp-json/wp/v2/icn_course`, {
+      headers: { 'Authorization': `Basic ${auth}` },
+      params: { search: courseInfo.label }
+    });
+
+    if (response.data.length === 0) {
+      // Crear nuevo curso
+      await axios.post(`${WORDPRESS_URL}/wp-json/wp/v2/icn_course`, {
+        title: courseInfo.title || courseInfo.label,
+        content: `Curso: ${courseInfo.title || courseInfo.label}`,
+        status: 'publish',
+        meta: {
+          lti_course_id: courseInfo.id,
+          course_label: courseInfo.label,
+          created_date: new Date().toISOString()
+        }
+      }, {
+        headers: { 'Authorization': `Basic ${auth}` }
+      });
+      console.log('📚 Curso creado en WordPress');
+    }
+  } catch (error) {
+    console.error('Error creando curso:', error.response?.data || error.message);
+  }
+}
+
+// Rutas adicionales
+lti.app.get('/api/user', (req, res) => {
+  if (!req.session.authenticated) {
+    return res.status(401).json({ error: 'No autenticado' });
+  }
+  res.json(req.session.userInfo);
 });
 
-// puente: si por error POSTean id_token a /lti/login, reenvía como POST a /lti/launch
-router.post('/lti/login', (req, res, next) => {
-  const idt = req.body && req.body.id_token;
-  if (!idt) return next();
-  const state = req.body.state || '';
-  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
-                            .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  return res.status(200).type('html').send(`<!doctype html><html><body>
-    <form id="f" method="post" action="/lti/launch">
-      <input type="hidden" name="id_token" value="${esc(idt)}"/>
-      <input type="hidden" name="state" value="${esc(state)}"/>
-    </form>
-    <script>document.getElementById('f').submit();</script>
-  </body></html>`);
-});
-
-// HEALTHCHECKS PÚBLICOS (para Railway y humanos cansados)
-router.get('/health', (_req, res) => {
+lti.app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
-    ts: new Date().toISOString(),
-    staticDir: STATIC_DIR,
-    lti: {
-      client_id: LTI_CLIENT_ID,
-      iss: LTI_PLATFORM_ISS,
-      loginUrl: '/lti/login',
-      launchUrl: '/lti/launch',
-      jwksUrl: '/.well-known/jwks.json'
-    }
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    wordpress: WORDPRESS_URL ? 'configurado' : 'no configurado'
   });
 });
-// duplicados bajo /lti/* porque tu healthcheck usa /lti/health
-router.get('/lti/health', (_req, res) => res.json({ status: 'OK', ts: new Date().toISOString() }));
-router.get('/live', (_req, res) => res.send('live'));
-router.get('/ready', (_req, res) => res.send('ready'));
-router.get('/lti/live', (_req, res) => res.send('live'));
-router.get('/lti/ready', (_req, res) => res.send('ready'));
 
-// opcional: expón el build (por si entras directo sin launch)
-router.get('/', (_req, res) => res.sendFile(path.join(STATIC_DIR, 'index.html')));
-
-// monta el router dentro del server de ltijs (exacto como hace el demo)
-lti.app.use(express.json());
-lti.app.use(express.urlencoded({ extended: true }));
-lti.app.use(router);
-
-/* ===== arranque y registro de plataformas ===== */
-const bootstrap = async () => {
-  await lti.deploy({ port: PORT });
-
-  // UDLA staging
+// Inicializar servidor
+const setup = async () => {
   try {
-    await lti.registerPlatform({
-      url: LTI_PLATFORM_ISS,
-      name: 'UDLA Staging',
-      clientId: LTI_CLIENT_ID,
-      authenticationEndpoint: LTI_PLATFORM_OIDC_AUTH,
-      accesstokenEndpoint: LTI_PLATFORM_TOKEN_URL,               // nombre correcto
-      authConfig: { method: 'JWK_SET', key: LTI_PLATFORM_JWKS }  // JWKS correcto
-    });
-  } catch (e) {
-    console.log('[registerPlatform] UDLA:', e.message || e);
-  }
+    // Desplegar LTI.js
+    await lti.deploy({ port: PORT });
 
-  // issuer global (por si Blackboard manda iss=https://blackboard.com)
-  try {
+    // Registrar plataforma Blackboard
     await lti.registerPlatform({
-      url: 'https://blackboard.com',
-      name: 'Blackboard Global Issuer',
-      clientId: LTI_CLIENT_ID,
-      authenticationEndpoint: LTI_PLATFORM_OIDC_AUTH,
-      accesstokenEndpoint: LTI_PLATFORM_TOKEN_URL,
-      authConfig: { method: 'JWK_SET', key: LTI_PLATFORM_JWKS }
+      url: PLATFORM_URL,
+      name: 'Blackboard Learn',
+      clientId: CLIENT_ID,
+      authenticationEndpoint: AUTH_ENDPOINT,
+      accesstokenEndpoint: TOKEN_ENDPOINT,
+      authConfig: { method: 'JWK_SET', key: JWKS_ENDPOINT }
     });
-  } catch (e) {
-    console.log('[registerPlatform] Global:', e.message || e);
-  }
 
-  console.log(`[BOOT] ltijs listo en :${PORT}`);
+    console.log('🎉 Servidor LTI.js iniciado exitosamente');
+    console.log(`🌐 Servidor corriendo en puerto ${PORT}`);
+    console.log(`🔗 Login URL: http://localhost:${PORT}/login`);
+    console.log(`🚀 Launch URL: http://localhost:${PORT}/`);
+    console.log(`🔑 JWKS URL: http://localhost:${PORT}/keys`);
+    
+  } catch (error) {
+    console.error('❌ Error iniciando servidor:', error);
+    process.exit(1);
+  }
 };
 
-bootstrap();
+setup();

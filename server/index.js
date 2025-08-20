@@ -425,6 +425,23 @@ app.get('/', (_req, res) => {
     </body></html>
   `);
 });
+// --- Normalizador de rutas LTI: quita la barra final y preserva querystring ---
+function redirectNoTrailingSlash(req, res, next) {
+  // Solo para GET/POST de las rutas problemáticas
+  const isLogin = req.path === '/lti/login/';
+  const isLaunch = req.path === '/lti/launch/';
+  if (!isLogin && !isLaunch) return next();
+
+  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  const target = req.path.slice(0, -1) + qs; // quita la barra final
+
+  // Si es POST (por ejemplo, un form_post de id_token), usa 307 para conservar método y body
+  const code = req.method === 'POST' ? 307 : 302;
+  return res.redirect(code, target);
+}
+
+// Aplica el normalizador ANTES de montar ltijs
+app.all(['/lti/login/', '/lti/launch/'], redirectNoTrailingSlash);
 
 /* ========= ERRORES / START ========= */
 app.use((error, _req, res, _next) => {

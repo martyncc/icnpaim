@@ -102,7 +102,11 @@ app.all(['/lti/login/','/lti/launch/'], (req, res) => {
   const code = req.method === 'POST' ? 307 : 302;
   return res.redirect(code, target);
 });
+<<<<<<< HEAD
 app.all('/lti/login', (req, res) => {
+=======
+app.all('/lti/logi', (req, res) => {
+>>>>>>> a3ec79d (ajuste rutas de inicio)
   const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
   return res.redirect(302, '/lti/login' + qs);
 });

@@ -12,7 +12,5 @@ RUN npm ci --ignore-scripts
 COPY . /usr/app
 RUN npm run build-server && npm run build-public
 
-VOLUME /data
-
 EXPOSE 3000
 CMD ./launch.sh

@@ -37,7 +37,8 @@ function App() {
   }
 
   if (error) {
-    return <ErrorScreen error={error} onRetry={loadUserInfo} />;
+   // return <ErrorScreen error={error} onRetry={loadUserInfo} />;
+   return '<div>hola mundo</div>'
   }
 
   if (!user) {

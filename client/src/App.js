@@ -13,6 +13,7 @@ function App() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    console.log(loadUserInfo);
     loadUserInfo();
   }, []);
 
@@ -21,6 +22,7 @@ function App() {
       setLoading(true);
       const response = await axios.get('/api/user');
       setUser(response.data);
+      console.log(loadUserInfo);
       setError(null);
     } catch (error) {
       console.error('Error cargando información del usuario:', error);

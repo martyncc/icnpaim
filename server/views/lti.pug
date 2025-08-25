@@ -1,0 +1,28 @@
+extends layout
+
+block content
+  h1= title
+  p We have received your LTI Launch. You can view the request body below.
+  p What would you like to do now?
+  p
+    form(name="login", action="/lti/outcomes", method="post")
+      input(type="submit", value="Outcomes")
+    form(name="caliper", action="/caliper/register", method="post")
+      input(type="submit", value="Register Caliper")
+    form(name="caliper_send", action="/caliper/send", method="post")
+      input(type="submit", value="Emit Event")
+    form(name="rest_auth", action="/rest/auth", method="post")
+      input(type="submit", value="Get REST Token")
+    form(name="rest_user", action="/rest/user", method="post")
+      input(type="submit", value="Get User Info")
+    form(name="rest_course", action="/rest/course", method="post")
+      input(type="submit", value="Get Course Info")
+    form(name="show_events", action="/caliper", method="get")
+      input(type="submit", value="Display Caliper Events")
+    form(name="show_membership", action="/lti/membership", method="get")
+      input(type="submit", value="Get Membership")
+    form(name="return", action=return_url, method="get")
+      input(type="button", onclick=return_onclick, value="Return to Learn")
+  p 
+  p Here's the request or response:
+  p !{content}

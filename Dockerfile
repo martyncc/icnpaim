@@ -1,5 +1,4 @@
 # Use Node 18
-8, not this cryptid from the fossil record
 FROM node:16
 
 # Create app directory

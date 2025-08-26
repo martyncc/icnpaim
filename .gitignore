@@ -7,6 +7,7 @@
 /npm-debug.log
 /server/config/config_override*.json
 /node_modules
+package-lock.json
 bower_components
 **/public/dist
 **/server/lib
@@ -112,3 +113,6 @@ local.properties
 
 # Code Recommenders
 .recommenders/
+
+
+package-lock.json

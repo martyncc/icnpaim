@@ -1,4 +1,4 @@
-FROM public.ecr.aws/docker/library/node:16
+FROM public.ecr.aws/docker/library/node:18
 
 # Create app directory
 RUN mkdir -p /usr/app

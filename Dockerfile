@@ -12,5 +12,5 @@ RUN npm ci --ignore-scripts
 COPY . /usr/app
 RUN npm run build-server && npm run build-public
 
-EXPOSE 8000
+EXPOSE 8080
 CMD ./launch.sh

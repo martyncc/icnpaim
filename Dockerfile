@@ -1,16 +1,23 @@
-FROM public.ecr.aws/docker/library/node:14
+# Use Node 18, not this cryptid from the fossil record
+FROM node:18
 
 # Create app directory
-RUN mkdir -p /usr/app
 WORKDIR /usr/app
 
 # Install app dependencies
-COPY package.json package-lock.json /usr/app/
-RUN npm ci --ignore-scripts
+COPY package.json package-lock.json ./
 
-# Bundle app source
-COPY . /usr/app
+# Avoid npm ci tantrum due to weird deps
+RUN npm install --legacy-peer-deps
+
+# Copy the rest of the code
+COPY . .
+
+# Build server and frontend
 RUN npm run build-server && npm run build-public
 
+# App runs on port 3000 (or whatever you want)
 EXPOSE 3000
-CMD ./launch.sh
+
+# Start your glorious mess
+CMD ["bash", "./launch.sh"]

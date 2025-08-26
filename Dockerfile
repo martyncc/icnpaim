@@ -1,5 +1,6 @@
-# Use Node 18, not this cryptid from the fossil record
-FROM node:18
+# Use Node 18
+8, not this cryptid from the fossil record
+FROM node:16
 
 # Create app directory
 WORKDIR /usr/app

@@ -17,7 +17,7 @@ COPY . .
 RUN npm run build-server && npm run build-public
 
 # App runs on port 3000 (or whatever you want)
-EXPOSE 3000
+EXPOSE 8080
 
 # Start your glorious mess
 CMD ["bash", "./launch.sh"]

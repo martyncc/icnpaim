@@ -1,6 +1,6 @@
 {
   "frontend_url": "https://lti.icnpaim.cl/",
-  "provider_port": "3000",
+  "provider_port": "8080",
   "database_directory": "server/src/database",
   "publicKeys": {
     "keys": [

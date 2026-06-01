@@ -7,7 +7,7 @@
   "repository": "https://github.com/blackboard/BBDN-LTI-Tool-Provider-Node",
   "license": "MIT",
   "engines": {
-    "node": ">=12 <16"
+    "node": "24"
   },
   "dependencies": {
     "@material-ui/core": "^4.12.3",
@@ -63,7 +63,7 @@
   },
   "scripts": {
     "build-server": "babel server/src -d server/lib --source-maps",
-    "build-public": "webpack",
+    "build-public": "NODE_OPTIONS=--openssl-legacy-provider webpack",
     "prestart": "npm run build-server && npm run build-public",
     "start": "node server/lib/server.js"
   },

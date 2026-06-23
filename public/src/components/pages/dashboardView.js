@@ -32,6 +32,10 @@ import ProgressDashboard from './Dashboards/progress'
 import { useResponsive } from '../../hooks/useResponsive'
 import { Link } from 'react-router-dom'
 
+
+const nodeEnv = process.env.NODE_ENV
+
+
 const params = parameters.getInstance();
  
 const styles = theme => ({
@@ -171,9 +175,23 @@ class DashboardView extends React.Component {
 
   async componentDidMount() {
     try {
-      await this.loadUserData();
-      await this.loadCourses();
-      await this.loadBBCourseId();
+      //bypass lti integration
+      console.log('DashboardView => componentDidMount => nodeEnv', nodeEnv)
+
+      if (nodeEnv=='development') {
+        console.log('DashboardView => componentDidMount => DEVELOPMENT')
+  
+        this.setState({
+          user:{bbCourseId:'213123'},
+          courses: [],
+          loading: false
+        });
+      } else {
+        await this.loadUserData();
+        await this.loadCourses();
+        await this.loadBBCourseId();
+      }
+      
     } catch (error) {
       console.error('Error loading dashboard:', error);
       this.setState({ 

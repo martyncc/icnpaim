@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import bodyParser from 'body-parser';
 import config from './config/config.js';
 import express from 'express';

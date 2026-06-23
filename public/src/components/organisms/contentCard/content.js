@@ -1,5 +1,5 @@
-import React from 'react';
-import Typography from '@material-ui/core/Typography';
+import React from 'react'
+import Typography from '@material-ui/core/Typography'
 
 export const CardContent = (props) => {
     const { 
@@ -11,25 +11,23 @@ export const CardContent = (props) => {
         <Typography
             style={{
                 flexGrow: 1,
-                fontSize: 12,
                 fontSize: '1rem',
                 lineHeight: '1.75rem',
                 fontWeight: 700
             }}
         >
-        {card.title}
+            {card.title}
         </Typography>
 
         <Typography
             style={{
-                fontSize: 11,
                 color,
                 fontSize: '0.875rem',
                 lineHeight: '1.25rem',
                 fontWeight: 500
             }}
         >
-        {card.description}
+            {card.description}
         </Typography>
     </>
 }

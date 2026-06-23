@@ -13,6 +13,8 @@ bower_components
 /server/src/database/applications-data.json
 /server/src/database/auth-data.json
 /server/src/database/cim-data.json
+/server/src/database/blackboard_token.json
+/server/src/database/blackboard.json
 
 # Created by https://www.gitignore.io/api/node,eclipse
 
@@ -113,3 +115,5 @@ local.properties
 # Code Recommenders
 .recommenders/
 .env
+
+

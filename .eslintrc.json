@@ -21,31 +21,30 @@
     "rules": {
         "indent": [
             "error",
-            2
-        ],
-        "linebreak-style": [
-            "error",
-            "unix"
+            4
         ],
         "quotes": [
             "error",
-            "single"
+            "single",
+            { "allowTemplateLiterals": true }
         ],
         "semi": [
-            "error",
-            "always"
+            "warn",
+            "never"
         ],
         "array-bracket-spacing": [
             "warn",
             "always"
         ],
-      "jsx-quotes": [
-        "warn",
-        "prefer-single"
-      ],
-      "react/display-name": [
-        "off"
-      ]
+        "jsx-quotes": [
+            "warn",
+            "prefer-single"
+        ],
+        
+        "react/display-name": [
+            "off"
+        ],
+        "react/prop-types": "off"
     },
   "ignorePatterns": [
     "*.md",
